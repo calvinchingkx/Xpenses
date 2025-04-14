@@ -365,17 +365,35 @@ class DatabaseHelper {
 
   Future<int> addAccount(Map<String, dynamic> account) async {
     final db = await database;
-    return await db.insert('accounts', account);
+    try {
+      return await db.insert('accounts', {
+        'name': account['name'],
+        'accountType': account['accountType'],
+        'balance': account['balance'],
+      });
+    } catch (e) {
+      print('Error adding account: $e');
+      return -1;
+    }
   }
 
   Future<int> updateAccount(Map<String, dynamic> account) async {
     final db = await database;
-    return await db.update(
-      'accounts',
-      account,
-      where: 'id = ?',
-      whereArgs: [account['id']],
-    );
+    try {
+      return await db.update(
+        'accounts',
+        {
+          'name': account['name'],
+          'accountType': account['accountType'],
+          'balance': account['balance'],
+        },
+        where: 'id = ?',
+        whereArgs: [account['id']],
+      );
+    } catch (e) {
+      print('Error updating account: $e');
+      return -1;
+    }
   }
 
   Future<int> updateAccountBalance(int accountId, double newBalance) async {
