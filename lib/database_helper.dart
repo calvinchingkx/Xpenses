@@ -23,7 +23,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onOpen: (db) async {
@@ -34,36 +34,49 @@ class DatabaseHelper {
 
   Future<void> _onCreate(Database db, int version) async {
     await db.execute('''CREATE TABLE accounts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
-      balance REAL DEFAULT 0.0,
-      accountType TEXT DEFAULT 'Cash'
-    )''');
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    balance REAL DEFAULT 0.0,
+    accountType TEXT DEFAULT 'Cash'
+  )''');
 
     await db.execute('''CREATE TABLE transactions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT,
-      date TEXT,
-      account_id INTEGER,
-      category TEXT,
-      subcategory TEXT DEFAULT 'No Subcategory',
-      amount REAL,
-      note TEXT,
-      FOREIGN KEY(account_id) REFERENCES accounts(id)
-    )''');
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT,
+    date TEXT,
+    account_id INTEGER,
+    from_account_id INTEGER,
+    to_account_id INTEGER,
+    category TEXT,
+    subcategory TEXT DEFAULT 'No Subcategory',
+    amount REAL,
+    note TEXT,
+    FOREIGN KEY(account_id) REFERENCES accounts(id),
+    FOREIGN KEY(from_account_id) REFERENCES accounts(id),
+    FOREIGN KEY(to_account_id) REFERENCES accounts(id)
+  )''');
 
     await db.execute('''CREATE TABLE categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      type TEXT NOT NULL
-    )''');
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL
+  )''');
 
     await db.execute('''CREATE TABLE subcategories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
-      category_id INTEGER,
-      FOREIGN KEY(category_id) REFERENCES categories(id)
-    )''');
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    category_id INTEGER,
+    FOREIGN KEY(category_id) REFERENCES categories(id)
+  )''');
+
+    await db.execute('''CREATE TABLE budgets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category_name TEXT,
+    type TEXT,
+    budget_limit REAL,
+    spent REAL DEFAULT 0.0,
+    created_at TEXT
+  )''');
 
     await db.execute('CREATE INDEX idx_account_id ON transactions(account_id)');
   }
@@ -74,6 +87,11 @@ class DatabaseHelper {
     }
     if (oldVersion < 3) {
       await db.execute('ALTER TABLE categories ADD COLUMN type TEXT NOT NULL DEFAULT "expense"');
+    }
+    if (oldVersion < 4) {
+      await db.execute('ALTER TABLE transactions ADD COLUMN from_account_id INTEGER');
+      await db.execute('ALTER TABLE transactions ADD COLUMN to_account_id INTEGER');
+      await db.execute('CREATE TABLE budgets (id INTEGER PRIMARY KEY AUTOINCREMENT, category_name TEXT, type TEXT, budget_limit REAL, spent REAL DEFAULT 0.0, created_at TEXT)');
     }
   }
 
@@ -95,20 +113,50 @@ class DatabaseHelper {
   // TRANSACTION CRUD
   Future<List<Map<String, dynamic>>> getAllTransactions() async {
     final db = await database;
-    return await db.rawQuery(''' 
-      SELECT 
-        t.id, 
-        t.type, 
-        t.date, 
-        a.name AS account, 
-        t.category, 
-        t.subcategory, 
-        t.amount, 
-        t.note 
-      FROM transactions t 
-      LEFT JOIN accounts a ON t.account_id = a.id 
-      ORDER BY t.date DESC
-    ''');
+    return await db.rawQuery('''
+    SELECT 
+      t.id, 
+      t.type, 
+      t.date, 
+      CASE
+        WHEN t.type = 'Transfer' THEN a_from.name
+        ELSE a.name
+      END AS account,
+      CASE
+        WHEN t.type = 'Transfer' THEN a_to.name
+        ELSE t.category
+      END AS category,
+      t.subcategory, 
+      t.amount, 
+      t.note,
+      a_from.name AS from_account,
+      a_to.name AS to_account
+    FROM transactions t
+    LEFT JOIN accounts a ON t.account_id = a.id
+    LEFT JOIN accounts a_from ON t.from_account_id = a_from.id
+    LEFT JOIN accounts a_to ON t.to_account_id = a_to.id
+    ORDER BY t.date DESC
+  ''');
+  }
+
+  // Add this to your DatabaseHelper class
+  Future<List<Map<String, dynamic>>> getTransfers() async {
+    final db = await database;
+    return await db.rawQuery('''
+    SELECT t1.id, t1.date, 
+           a1.name as from_account, 
+           a2.name as to_account,
+           t1.amount, t1.note
+    FROM transactions t1
+    JOIN transactions t2 ON t1.date = t2.date AND t1.amount = t2.amount
+    JOIN accounts a1 ON t1.account_id = a1.id
+    JOIN accounts a2 ON t2.account_id = a2.id
+    WHERE t1.type = 'Expense' 
+      AND t2.type = 'Income'
+      AND t1.category = 'Transfer'
+      AND t2.category = 'Transfer'
+    ORDER BY t1.date DESC
+  ''');
   }
 
   Future<int> insertTransaction(Map<String, dynamic> transaction) async {
@@ -466,7 +514,12 @@ class DatabaseHelper {
 
   /// Get all budgets from the database
   Future<List<Map<String, dynamic>>> getBudgets() async {
-    final db = await database;
-    return await db.query('budgets');
+    try {
+      final db = await database;
+      return await db.query('budgets');
+    } catch (e) {
+      print('Budgets table not available yet: $e');
+      return [];
+    }
   }
 }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // To format the date
-import 'database_helper.dart'; // Assuming you have your DatabaseHelper in this file
+import 'package:intl/intl.dart';
+import 'database_helper.dart';
 
 class TransactionPage extends StatefulWidget {
   final ScrollController scrollController;
@@ -11,392 +11,386 @@ class TransactionPage extends StatefulWidget {
 }
 
 class _TransactionPageState extends State<TransactionPage> {
-  String selectedTransactionType = "Expense"; // Default selection
+  String selectedTransactionType = "Expense";
   DateTime selectedDate = DateTime.now();
   String? selectedAccount;
   String? selectedCategory;
   String? selectedSubcategory;
 
-  List<String> accountTypes = []; // Loaded from DB
-  List<String> categories = []; // Loaded dynamically based on type
-  List<String> subcategories = []; // Loaded dynamically based on category
+  List<String> accountTypes = [];
+  List<String> categories = [];
+  List<String> subcategories = [];
 
   final TextEditingController amountController = TextEditingController();
   final TextEditingController noteController = TextEditingController();
+  final _formKey = GlobalKey<FormState>(); // Added form validation
 
   @override
   void initState() {
     super.initState();
-    _loadData(); // Load accounts and categories when the page is first created
+    _loadData();
   }
 
-  void _loadData() async {
-    // Load accounts first
-    accountTypes = await DatabaseHelper.instance
-        .getAccounts()
-        .then((accounts) => accounts.map((e) => e['name'] as String).toList());
-
-    // After loading accounts, load categories
-    await _loadCategories("expense");  // Set a default category type for the initial load
+  @override
+  void dispose() {
+    amountController.dispose();
+    noteController.dispose();
+    super.dispose();
   }
 
-  // Fetch categories based on transaction type
+  Future<void> _loadData() async {
+    try {
+      final accounts = await DatabaseHelper.instance.getAccounts();
+      setState(() {
+        accountTypes = accounts.map((e) => e['name'] as String).toList();
+        if (accountTypes.isNotEmpty) selectedAccount = accountTypes.first;
+      });
+      await _loadCategories(selectedTransactionType.toLowerCase());
+    } catch (e) {
+      _showError('Failed to load data: ${e.toString()}');
+    }
+  }
+
   Future<void> _loadCategories(String type) async {
     try {
-      final categoriesFromDb = await DatabaseHelper.instance.getCategories(type.toLowerCase());
-      print('Categories fetched from DB for $type: $categoriesFromDb');
+      List<Map<String, dynamic>> items = [];
 
-      if (categoriesFromDb.isEmpty) {
-        print('No categories found for type: $type');
-      }
-
-      categories = categoriesFromDb.map((e) => e['name'] as String).toList();
-      selectedCategory = null;
-      selectedSubcategory = null;
-      subcategories.clear();
-
-      setState(() {});
-    } catch (e) {
-      print('Error loading categories: $e');
-    }
-  }
-
-  // Load subcategories based on the selected category
-  void _loadSubcategories(String? categoryName) async {
-    if (categoryName != null) {
-      // Fetch category ID based on name
-      final categoriesFromDb = await DatabaseHelper.instance.getCategories(selectedTransactionType);
-      final selectedCategoryId = categoriesFromDb.firstWhere((category) => category['name'] == categoryName)['id'];
-
-      // Fetch subcategories for the selected category ID
-      final subcategoriesFromDb = await DatabaseHelper.instance.getSubcategoriesByCategoryId(selectedCategoryId);
-
-      // Check if subcategories are empty or null, and add a default option if necessary
-      if (subcategoriesFromDb.isEmpty) {
-        subcategories = ['No Subcategory'];  // Default option
+      if (type == 'transfer') {
+        // For transfers, get all accounts except the currently selected one
+        final allAccounts = await DatabaseHelper.instance.getAccounts();
+        items = allAccounts.where((account) =>
+        account['name'] != selectedAccount
+        ).toList();
       } else {
-        subcategories = subcategoriesFromDb.map((e) => e['name'] as String).toList();
+        // For income/expense, get categories of the selected type
+        items = await DatabaseHelper.instance.getCategories(type);
       }
-      selectedSubcategory = null; // Reset selected subcategory
-      setState(() {}); // Refresh the UI
+
+      setState(() {
+        categories = items.map((e) => e['name'] as String).toList();
+        selectedCategory = categories.isNotEmpty ? categories.first : null;
+        selectedSubcategory = null;
+        subcategories.clear();
+      });
+
+      // Only load subcategories for non-transfer types
+      if (selectedCategory != null && type != 'transfer') {
+        await _loadSubcategories(selectedCategory!);
+      }
+    } catch (e) {
+      _showError('Failed to load data: ${e.toString()}');
     }
   }
 
-  // Save transaction
-  void _saveTransaction() async {
-    if (amountController.text.isEmpty || selectedAccount == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please fill in all required fields!')),
+  Future<void> _loadSubcategories(String categoryName) async {
+    try {
+      final categoriesFromDb = await DatabaseHelper.instance
+          .getCategories(selectedTransactionType.toLowerCase());
+      final category = categoriesFromDb.firstWhere(
+            (c) => c['name'] == categoryName,
+        orElse: () => {'id': -1},
       );
+
+      if (category['id'] != -1) {
+        final subcategoriesFromDb = await DatabaseHelper.instance
+            .getSubcategoriesByCategoryId(category['id']);
+        setState(() {
+          subcategories = subcategoriesFromDb.isNotEmpty
+              ? subcategoriesFromDb.map((e) => e['name'] as String).toList()
+              : ['No Subcategory'];
+          if (subcategories.isNotEmpty) selectedSubcategory = subcategories.first;
+        });
+      }
+    } catch (e) {
+      _showError('Failed to load subcategories: ${e.toString()}');
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
+  }
+
+  Future<void> _saveTransaction() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    if (selectedTransactionType == 'Transfer') {
+      await _handleTransfer();
       return;
     }
 
-    if (selectedAccount != null && selectedCategory != null) {
-      // Fetch account ID by name
-      final selectedAccountId = await DatabaseHelper.instance.getAccountIdByName(selectedAccount!);
+    try {
+      final accountId = await DatabaseHelper.instance
+          .getAccountIdByName(selectedAccount!);
+      final amount = double.parse(amountController.text);
 
-
-      var transaction = {
+      final transaction = {
         'type': selectedTransactionType,
         'date': _formatDate(selectedDate),
-        'account_id': selectedAccountId,  // Use the account ID, not the name
-        'category': selectedCategory,
-        'subcategory': selectedSubcategory,
-        'amount': double.tryParse(amountController.text) ?? 0.0,
+        'account_id': accountId,
+        'category': selectedCategory ?? '',
+        'subcategory': selectedSubcategory ?? '',
+        'amount': amount,
         'note': noteController.text,
       };
 
-      // Insert transaction into the database
       final result = await DatabaseHelper.instance.insertTransaction(transaction);
-      print('Transaction saved: $result');
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Transaction saved successfully!')),
-      );
-
-
-      // Update account balance
-      await _updateAccountBalance(
-        selectedAccountId,
-        transaction['amount'] as double,  // Ensure it's treated as a double
-        transaction['type'] as String,    // Ensure it's treated as a String
-      );
-
-      // Reload the dashboard or show confirmation
-      setState(() {
-        // Update UI or show a snackbar
-      });
-
-      // Optionally, close the page or navigate back
-      Navigator.pop(context);
+      if (result > 0) {
+        // Now properly calling _updateAccountBalance
+        await _updateAccountBalance(accountId, amount, selectedTransactionType);
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      _showError('Failed to save transaction: ${e.toString()}');
     }
   }
 
-  // Method to update the account balance
+  // Update the _updateAccountBalance method to handle type casting properly
   Future<void> _updateAccountBalance(int accountId, double amount, String transactionType) async {
-    double balanceChange = transactionType == 'Income' ? amount : -amount;
-
-    // Fetch the current balance of the selected account
-    Map<String, dynamic> account = await DatabaseHelper.instance.getAccount(accountId);
-
-    // Update the balance
-    double newBalance = account['balance'] + balanceChange;
-
-    // Update the account balance in the database
+    final balanceChange = transactionType == 'Income' ? amount : -amount;
+    final account = await DatabaseHelper.instance.getAccount(accountId);
+    final currentBalance = (account['balance'] as num).toDouble(); // Ensure we get a double
+    final newBalance = currentBalance + balanceChange;
     await DatabaseHelper.instance.updateAccountBalance(accountId, newBalance);
   }
 
-  // Format date helper
-  String _formatDate(DateTime date) {
-    return DateFormat('dd/MM/yyyy (EEE)').format(date);
+  // Add this new method for handling transfers
+  Future<void> _handleTransfer() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    if (selectedAccount == null || selectedCategory == null) {
+      _showError('Please select both From and To accounts');
+      return;
+    }
+
+    if (selectedAccount == selectedCategory) {
+      _showError('Cannot transfer to the same account');
+      return;
+    }
+
+    try {
+      final fromAccountId = await DatabaseHelper.instance
+          .getAccountIdByName(selectedAccount!);
+      final toAccountId = await DatabaseHelper.instance
+          .getAccountIdByName(selectedCategory!);
+      final amount = double.parse(amountController.text);
+
+      // Create a single transfer transaction record
+      final transfer = {
+        'type': 'Transfer',  // Changed from separate Income/Expense
+        'date': _formatDate(selectedDate),
+        'from_account_id': fromAccountId,  // New field
+        'to_account_id': toAccountId,      // New field
+        'amount': amount,
+        'note': noteController.text,      // User's original note
+      };
+
+      // Execute in a transaction
+      final db = await DatabaseHelper.instance.database;
+      await db.transaction((txn) async {
+        // First insert the transfer record
+        await txn.insert('transactions', transfer);
+
+        // Update both account balances
+        final fromAccount = await txn.query(
+          'accounts',
+          where: 'id = ?',
+          whereArgs: [fromAccountId],
+        );
+
+        final toAccount = await txn.query(
+          'accounts',
+          where: 'id = ?',
+          whereArgs: [toAccountId],
+        );
+
+        final newFromBalance = (fromAccount.first['balance'] as num).toDouble() - amount;
+        final newToBalance = (toAccount.first['balance'] as num).toDouble() + amount;
+
+        await txn.update(
+          'accounts',
+          {'balance': newFromBalance},
+          where: 'id = ?',
+          whereArgs: [fromAccountId],
+        );
+
+        await txn.update(
+          'accounts',
+          {'balance': newToBalance},
+          where: 'id = ?',
+          whereArgs: [toAccountId],
+        );
+      });
+
+      Navigator.pop(context, true);
+    } catch (e) {
+      _showError('Failed to process transfer: ${e.toString()}');
+    }
   }
 
-  // Date picker
+  String _formatDate(DateTime date) => DateFormat('dd/MM/yyyy (EEE)').format(date);
+
   Future<void> _selectDate(BuildContext context) async {
-    final DateTime? pickedDate = await showDatePicker(
+    final pickedDate = await showDatePicker(
       context: context,
       initialDate: selectedDate,
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
     );
     if (pickedDate != null && pickedDate != selectedDate) {
-      setState(() {
-        selectedDate = pickedDate;
-      });
+      setState(() => selectedDate = pickedDate);
     }
   }
 
-  // Build dropdown field
-  Widget _buildDropdownField(String label, List<String> items, String? selectedValue, ValueChanged<String?> onChanged) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 100,
-          child: Text(
-            "$label:",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+  Widget _buildTypeSelector(String type, Color activeColor) {
+    return GestureDetector(
+      onTap: () async {
+        if (selectedTransactionType != type) {
+          setState(() {
+            selectedTransactionType = type;
+            // Reset account selection when switching to transfer
+            if (type == 'Transfer') {
+              selectedCategory = null;
+            }
+          });
+          await _loadCategories(type.toLowerCase());
+        }
+      },
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: selectedTransactionType == type ? activeColor : Colors.grey,
+            width: 2,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          type,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.black,
           ),
         ),
-        SizedBox(width: 4),
-        Expanded(
-          child: DropdownButton<String>(
-            value: selectedValue,
-            isExpanded: true,
-            hint: Text("Select $label"),
-            onChanged: onChanged,
-            items: items.map<DropdownMenuItem<String>>((String value) {
-              return DropdownMenuItem<String>(value: value, child: Text(value));
-            }).toList(),
-          ),
-        ),
-      ],
+      ),
+    );
+  }
+
+  Widget _buildDropdown(
+      String label,
+      List<String> items,
+      String? value,
+      ValueChanged<String?> onChanged,
+      ) {
+    final isTransfer = selectedTransactionType == 'Transfer';
+    final displayLabel = isTransfer && label == 'Category' ? 'To Account' : label;
+
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: InputDecoration(
+        labelText: displayLabel,
+        border: OutlineInputBorder(),
+      ),
+      items: items.map((item) => DropdownMenuItem(
+        value: item,
+        child: Text(item),
+      )).toList(),
+      onChanged: (newValue) {
+        if (isTransfer && label == 'Account' && newValue == selectedCategory) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Cannot transfer to the same account')),
+          );
+          return;
+        }
+        onChanged(newValue);
+      },
+      validator: (value) => value == null ? 'Please select $displayLabel' : null,
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      controller: widget.scrollController,
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
+    return Form(
+      key: _formKey,
+      child: SingleChildScrollView(
+        controller: widget.scrollController,
+        padding: EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Transaction Type
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                GestureDetector(
-                  onTap: () async {
-                    if (selectedTransactionType != "Income") {
-                      setState(() {
-                        selectedTransactionType = "Income";  // Update selected type
-                      });
-                      await _loadCategories("income");  // Load income categories
-                    }
-                  },
-                  child: Container(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: selectedTransactionType == "Income" ? Colors.blue : Colors.grey,
-                        width: 2,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      "Income",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () async {
-                    if (selectedTransactionType != "Expense") {
-                      setState(() {
-                        selectedTransactionType = "Expense";  // Update selected type
-                      });
-                      await _loadCategories("expense");  // Load expense categories
-                    }
-                  },
-                  child: Container(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: selectedTransactionType == "Expense" ? Colors.red : Colors.grey,
-                        width: 2,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      "Expense",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () async {
-                    if (selectedTransactionType != "Transfer") {
-                      setState(() {
-                        selectedTransactionType = "Transfer";  // Update selected type
-                      });
-                      await _loadCategories("transfer");  // Load transfer categories (if any)
-                    }
-                  },
-                  child: Container(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: selectedTransactionType == "Transfer" ? Colors.blueGrey : Colors.grey,
-                        width: 2,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      "Transfer",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ),
-                ),
+                _buildTypeSelector("Income", Colors.blue),
+                _buildTypeSelector("Expense", Colors.red),
+                _buildTypeSelector("Transfer", Colors.blueGrey),
               ],
             ),
-
-            // Date
             SizedBox(height: 20),
             GestureDetector(
               onTap: () => _selectDate(context),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 100,
-                    child: Text(
-                      "Date:",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
+              child: AbsorbPointer(
+                child: TextFormField(
+                  decoration: InputDecoration(
+                    labelText: "Date",
+                    border: OutlineInputBorder(),
                   ),
-                  SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      _formatDate(selectedDate), // Format the selected date
-                      style: TextStyle(fontSize: 16, color: Colors.blueGrey), // Different color for the date
-                    ),
-                  ),
-                ],
+                  controller: TextEditingController(text: _formatDate(selectedDate)),
+                ),
               ),
             ),
-
-
-            // Account
             SizedBox(height: 20),
-            _buildDropdownField("Account", accountTypes, selectedAccount, (newAccount) {
+            _buildDropdown("Account", accountTypes, selectedAccount, (value) {
+              setState(() => selectedAccount = value);
+            }),
+            SizedBox(height: 20),
+            _buildDropdown("Category", categories, selectedCategory, (value) {
               setState(() {
-                selectedAccount = newAccount;
+                selectedCategory = value;
+                if (value != null) _loadSubcategories(value);
               });
             }),
-
-            // Category
-            SizedBox(height: 20),
-            _buildDropdownField("Category", categories, selectedCategory, (newCategory) {
-              setState(() {
-                selectedCategory = newCategory;
-                _loadSubcategories(newCategory);
-              });
-            }),
-
-            // Subcategory (if any)
             if (subcategories.isNotEmpty) ...[
               SizedBox(height: 20),
-              _buildDropdownField("Subcategory", subcategories, selectedSubcategory, (newSubcategory) {
-                setState(() {
-                  selectedSubcategory = newSubcategory;
-                });
-              }),
+              _buildDropdown("Subcategory", subcategories, selectedSubcategory,
+                      (value) => setState(() => selectedSubcategory = value)),
             ],
-
-            // Amount
             SizedBox(height: 20),
-            Row(
-              children: [
-                SizedBox(
-                  width: 100,
-                  child: Text(
-                    "Amount:",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: amountController,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      hintText: "Enter amount",
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-              ],
+            TextFormField(
+              controller: amountController,
+              keyboardType: TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: "Amount",
+                border: OutlineInputBorder(),
+                prefixText: '\$ ',
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) return 'Please enter amount';
+                if (double.tryParse(value) == null) return 'Invalid amount';
+                return null;
+              },
             ),
-
-            // Note
             SizedBox(height: 20),
-            Row(
-              children: [
-                SizedBox(
-                  width: 100,
-                  child: Text(
-                    "Note:",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: noteController,
-                    decoration: InputDecoration(
-                      hintText: "Enter note",
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-              ],
+            TextFormField(
+              controller: noteController,
+              decoration: InputDecoration(
+                labelText: "Note",
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
             ),
-
-            // Save Button
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _saveTransaction,
-              child: Text("Save Transaction"),
+            SizedBox(height: 30),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _saveTransaction,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 15),
+                  child: Text("SAVE TRANSACTION"),
+                ),
+              ),
             ),
           ],
         ),

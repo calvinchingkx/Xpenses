@@ -18,9 +18,11 @@ class _AccountScreenState extends State<AccountScreen> {
   // Load accounts from the database
   void _loadAccounts() async {
     final accounts = await DatabaseHelper.instance.getAccounts();
-    setState(() {
-      _accounts = accounts;
-    });
+    if (mounted) {
+      setState(() {
+        _accounts = accounts;
+      });
+    }
   }
 
   // Add or edit an account

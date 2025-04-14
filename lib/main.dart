@@ -20,12 +20,15 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: MainScreen(),
+      home: const MainScreen(),
+      debugShowCheckedModeBanner: false, // Remove debug banner
     );
   }
 }
 
 class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
+
   @override
   _MainScreenState createState() => _MainScreenState();
 }
@@ -33,7 +36,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
-  // List of pages to display
+  // List of page builders to lazy load pages when needed
   final List<Widget> _pages = [
     DashboardScreen(),
     ReportScreen(),
@@ -42,7 +45,39 @@ class _MainScreenState extends State<MainScreen> {
     SettingsScreen(),
   ];
 
-  // Handle the bottom navigation bar item click
+  // Navigation bar items
+  static const List<BottomNavigationBarItem> _navBarItems = [
+    BottomNavigationBarItem(
+      icon: Icon(Icons.dashboard),
+      label: 'Home',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.pie_chart),
+      label: 'Report',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.account_balance),
+      label: 'Account',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.attach_money),
+      label: 'Budget',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.settings),
+      label: 'Settings',
+    ),
+  ];
+
+  // Page titles corresponding to each tab
+  static const List<String> _pageTitles = [
+    'Dashboard',
+    'Reports',
+    'Accounts',
+    'Budgets',
+    'Settings',
+  ];
+
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
@@ -54,41 +89,25 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
-        //title: Text(_getPageTitle(_selectedIndex)),  // Dynamic title based on selected page
+        title: Text(_pageTitles[_selectedIndex]),
       ),
-      body: _pages[_selectedIndex],  // Display the selected screen
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
-        selectedItemColor: Colors.blueGrey,
-        unselectedItemColor: Colors.grey,
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.pie_chart),
-            label: 'Report',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.account_balance),
-            label: 'Account',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.attach_money),
-            label: 'Budget',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: _pages,
+      ),
+      bottomNavigationBar: SafeArea(
+        child: BottomNavigationBar(
+          currentIndex: _selectedIndex,
+          onTap: _onItemTapped,
+          type: BottomNavigationBarType.fixed,
+          selectedItemColor: Colors.blueGrey,
+          unselectedItemColor: Colors.grey,
+          items: _navBarItems,
+        ),
       ),
     );
   }
-
-  /*
+/*
   // Method to return page title based on selected index
   String _getPageTitle(int index) {
     switch (index) {
