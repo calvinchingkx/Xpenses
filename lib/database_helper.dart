@@ -226,8 +226,6 @@ class DatabaseHelper {
     }
   }
 
-
-
   Future<int> deleteTransaction(int transactionId) async {
     try {
       final db = await database;
@@ -361,7 +359,6 @@ class DatabaseHelper {
     }
   }
 
-
   Future<Map<String, dynamic>?> getAccountByName(String accountName) async {
     final db = await database;
     var result = await db.query(
@@ -417,7 +414,6 @@ class DatabaseHelper {
   }
 
   // SUBCATEGORY CRUD
-
   // Get all subcategories for a specific category
   Future<List<Map<String, dynamic>>> getSubcategories(int categoryId) async {
     final db = await database;
@@ -451,7 +447,6 @@ class DatabaseHelper {
     });
   }
 
-
   Future<int> updateSubcategory(int id, String newName) async {
     final db = await database;
     return await db.update(
@@ -461,7 +456,6 @@ class DatabaseHelper {
       whereArgs: [id],
     );
   }
-
 
   Future<int> deleteSubcategory(int id) async {
     final db = await database;
@@ -497,8 +491,6 @@ class DatabaseHelper {
     return categories;  // Return categories with their subcategories
   }
 
-
-
   Future<int> addBudget(String category, String type, double limit) async {
     final db = await database;
     final budget = {
@@ -510,7 +502,6 @@ class DatabaseHelper {
     };
     return await db.insert('budgets', budget);
   }
-
 
   /// Get all budgets from the database
   Future<List<Map<String, dynamic>>> getBudgets() async {
