@@ -56,8 +56,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     setState(() => _isLoading = true);
     try {
-      final income = await DatabaseHelper.instance.getTotalByType("Income");
-      final expense = await DatabaseHelper.instance.getTotalByType("Expense");
+      final income = await DatabaseHelper().getTotalByTypeForMonth(
+          "Income",
+          currentMonthDate.month,
+          currentMonthDate.year
+      );
+      final expense = await DatabaseHelper().getTotalByTypeForMonth(
+          "Expense",
+          currentMonthDate.month,
+          currentMonthDate.year
+      );
       final transactions = await _loadTransactions();
 
       if (mounted) {
@@ -116,17 +124,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<Map<String, List<Map<String, dynamic>>>> _loadTransactions() async {
-    final allTransactions = await DatabaseHelper.instance.getAllTransactions();
+    final allTransactions = await DatabaseHelper().getTransactionsForMonth(
+      currentMonthDate.month,
+      currentMonthDate.year,
+    );
+
     final Map<String, List<Map<String, dynamic>>> grouped = {};
 
     for (var transaction in allTransactions) {
       final date = _DateUtils.tryParse(transaction['date']);
       if (date == null) continue;
 
-      if (date.month == currentMonthDate.month && date.year == currentMonthDate.year) {
-        final formattedDate = _DateUtils.formatStorageDate(date);
-        grouped.putIfAbsent(formattedDate, () => []).add(transaction);
-      }
+      final formattedDate = _DateUtils.formatStorageDate(date);
+      grouped.putIfAbsent(formattedDate, () => []).add(transaction);
     }
 
     final sortedKeys = grouped.keys.toList()
@@ -185,15 +195,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           body: Column(
             children: [
-              // Fixed header section
               Container(
                 color: Theme.of(context).scaffoldBackgroundColor,
                 child: Column(
                   children: [
                     const Divider(thickness: 1, color: Colors.black45),
-                    // Month selector
                     Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      padding: const EdgeInsets.symmetric(vertical: 0.0),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -220,9 +228,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     const Divider(thickness: 2, color: Colors.black45),
-                    // Summary row
                     Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      padding: const EdgeInsets.symmetric(vertical: 2.0),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
@@ -236,8 +243,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ),
-
-              // Transaction list with refresh
               Expanded(
                 child: SmartRefresher(
                   controller: _refreshController,
@@ -368,7 +373,7 @@ class _TransactionTile extends StatelessWidget {
         : Colors.red;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 12.0),
+      padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 14.0),
       child: GestureDetector(
         onTap: onTap,
         child: Row(

@@ -23,7 +23,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onOpen: (db) async {
@@ -41,44 +41,45 @@ class DatabaseHelper {
   )''');
 
     await db.execute('''CREATE TABLE transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    type TEXT,
-    date TEXT,
-    account_id INTEGER,
-    from_account_id INTEGER,
-    to_account_id INTEGER,
-    category TEXT,
-    subcategory TEXT DEFAULT 'No Subcategory',
-    amount REAL,
-    note TEXT,
-    FOREIGN KEY(account_id) REFERENCES accounts(id),
-    FOREIGN KEY(from_account_id) REFERENCES accounts(id),
-    FOREIGN KEY(to_account_id) REFERENCES accounts(id)
-  )''');
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT,
+      date TEXT,
+      account_id INTEGER,
+      from_account_id INTEGER,
+      to_account_id INTEGER,
+      category TEXT,
+      subcategory TEXT DEFAULT 'No Subcategory',
+      amount REAL,
+      note TEXT,
+      FOREIGN KEY(account_id) REFERENCES accounts(id),
+      FOREIGN KEY(from_account_id) REFERENCES accounts(id),
+      FOREIGN KEY(to_account_id) REFERENCES accounts(id)
+    )''');
 
     await db.execute('''CREATE TABLE categories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL
-  )''');
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL
+    )''');
 
     await db.execute('''CREATE TABLE subcategories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    category_id INTEGER,
-    FOREIGN KEY(category_id) REFERENCES categories(id)
-  )''');
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      category_id INTEGER,
+      FOREIGN KEY(category_id) REFERENCES categories(id)
+    )''');
 
     await db.execute('''CREATE TABLE budgets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    category_name TEXT,
-    type TEXT,
-    budget_limit REAL,
-    spent REAL DEFAULT 0.0,
-    created_at TEXT
-  )''');
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category_name TEXT,
+      type TEXT,
+      budget_limit REAL,
+      spent REAL DEFAULT 0.0,
+      created_at TEXT
+    )''');
 
-    await db.execute('CREATE INDEX idx_account_id ON transactions(account_id)');
+    await db.execute('CREATE INDEX idx_transactions_date ON transactions(date)');
+    await db.execute('CREATE INDEX idx_transactions_type ON transactions(type)');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -92,6 +93,10 @@ class DatabaseHelper {
       await db.execute('ALTER TABLE transactions ADD COLUMN from_account_id INTEGER');
       await db.execute('ALTER TABLE transactions ADD COLUMN to_account_id INTEGER');
       await db.execute('CREATE TABLE budgets (id INTEGER PRIMARY KEY AUTOINCREMENT, category_name TEXT, type TEXT, budget_limit REAL, spent REAL DEFAULT 0.0, created_at TEXT)');
+    }
+    if (oldVersion < 5) {
+      await db.execute('CREATE INDEX idx_transactions_date ON transactions(date)');
+      await db.execute('CREATE INDEX idx_transactions_type ON transactions(type)');
     }
   }
 
@@ -108,6 +113,55 @@ class DatabaseHelper {
       return result.first.values.first as double?;
     }
     return 0.0; // Return 0.0 if no result or null
+  }
+
+  Future<double?> getTotalByTypeForMonth(String type, int month, int year) async {
+    final db = await database;
+    final monthStr = month.toString().padLeft(2, '0');
+    final yearStr = year.toString();
+
+    final result = await db.rawQuery('''
+      SELECT SUM(amount) as total 
+      FROM transactions 
+      WHERE type = ? 
+      AND substr(date, 4, 2) = ? 
+      AND substr(date, 7, 4) = ?
+    ''', [type, monthStr, yearStr]);
+
+    return result.first['total'] as double?;
+  }
+
+  Future<List<Map<String, dynamic>>> getTransactionsForMonth(int month, int year) async {
+    final db = await database;
+    final monthStr = month.toString().padLeft(2, '0');
+    final yearStr = year.toString();
+
+    return await db.rawQuery('''
+      SELECT 
+        t.id, 
+        t.type, 
+        t.date, 
+        CASE
+          WHEN t.type = 'Transfer' THEN a_from.name
+          ELSE a.name
+        END AS account,
+        CASE
+          WHEN t.type = 'Transfer' THEN a_to.name
+          ELSE t.category
+        END AS category,
+        t.subcategory, 
+        t.amount, 
+        t.note,
+        a_from.name AS from_account,
+        a_to.name AS to_account
+      FROM transactions t
+      LEFT JOIN accounts a ON t.account_id = a.id
+      LEFT JOIN accounts a_from ON t.from_account_id = a_from.id
+      LEFT JOIN accounts a_to ON t.to_account_id = a_to.id
+      WHERE substr(t.date, 4, 2) = ? 
+      AND substr(t.date, 7, 4) = ?
+      ORDER BY t.date DESC
+    ''', [monthStr, yearStr]);
   }
 
   // TRANSACTION CRUD
