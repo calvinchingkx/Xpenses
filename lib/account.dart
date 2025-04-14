@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
-import 'database_helper.dart'; // Import the DatabaseHelper class
+import 'database_helper.dart';
+import 'package:provider/provider.dart';
+import 'app_refresh_notifier.dart';
+import 'package:pull_to_refresh/pull_to_refresh.dart';
 
 class AccountScreen extends StatefulWidget {
   @override
@@ -7,7 +10,9 @@ class AccountScreen extends StatefulWidget {
 }
 
 class _AccountScreenState extends State<AccountScreen> {
+  final RefreshController _refreshController = RefreshController();
   List<Map<String, dynamic>> _accounts = [];
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -15,17 +20,37 @@ class _AccountScreenState extends State<AccountScreen> {
     _loadAccounts();
   }
 
-  // Load accounts from the database
-  void _loadAccounts() async {
-    final accounts = await DatabaseHelper.instance.getAccounts();
-    if (mounted) {
-      setState(() {
-        _accounts = accounts;
-      });
+  Future<void> _loadAccounts() async {
+    if (_isLoading) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final accounts = await DatabaseHelper.instance.getAccounts();
+      if (mounted) {
+        setState(() {
+          _accounts = accounts;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load accounts: ${e.toString()}')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _refreshController.refreshCompleted();
+      }
     }
   }
 
-  // Add or edit an account
+  Future<void> _onRefresh() async {
+    await _loadAccounts();
+    // Also reset the refresh notifier flag if needed
+    Provider.of<AppRefreshNotifier>(context, listen: false).accountRefreshComplete();
+  }
+
   void _addOrEditAccount({Map<String, dynamic>? account}) async {
     final newAccount = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -33,79 +58,119 @@ class _AccountScreenState extends State<AccountScreen> {
     );
 
     if (newAccount != null) {
-      if (account == null) {
-        // Add new account to the database
-        await DatabaseHelper.instance.addAccount(newAccount);
-      } else {
-        // Edit existing account in the database
-        newAccount['id'] = account['id'];
-        await DatabaseHelper.instance.updateAccount(newAccount);
+      try {
+        if (account == null) {
+          await DatabaseHelper.instance.addAccount(newAccount);
+        } else {
+          newAccount['id'] = account['id'];
+          await DatabaseHelper.instance.updateAccount(newAccount);
+        }
+        // Notify for refresh
+        Provider.of<AppRefreshNotifier>(context, listen: false).refreshAccounts();
+        _loadAccounts();
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save account: ${e.toString()}')),
+        );
       }
-      // After adding or updating the account
-      print('Account added/updated successfully');
-      _loadAccounts(); // Reload accounts after adding or editing
-
     }
   }
 
-  // Delete an account
   void _deleteAccount(int accountId) async {
-    await DatabaseHelper.instance.deleteAccount(accountId);
-    _loadAccounts(); // Reload accounts after deletion
+    try {
+      await DatabaseHelper.instance.deleteAccount(accountId);
+      // Notify for refresh
+      Provider.of<AppRefreshNotifier>(context, listen: false).refreshAccounts();
+      _loadAccounts();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete account: ${e.toString()}')),
+      );
+    }
   }
 
-  // Calculate the total balance
   double _calculateTotalBalance() {
-    return _accounts.fold(0.0, (sum, account) => sum + account['balance']);
+    return _accounts.fold(0.0, (sum, account) => sum + (account['balance'] as num).toDouble());
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Manage Accounts'),
-        centerTitle: true,
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text(
-              'Total Balance: \$${_calculateTotalBalance().toStringAsFixed(2)}',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
+    return Consumer<AppRefreshNotifier>(
+      builder: (context, refreshNotifier, _) {
+        // Handle refresh notifications
+        if (refreshNotifier.shouldRefreshAccounts) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _loadAccounts();
+            refreshNotifier.accountRefreshComplete();
+          });
+        }
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Text('Manage Accounts'),
+            centerTitle: true,
           ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _accounts.length,
-              itemBuilder: (context, index) {
-                final account = _accounts[index];
-                return Card(
-                  margin: EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                  child: ListTile(
-                    title: Text(account['name']),
-                    subtitle: Text('Type: ${account['accountType']}'),
-                    trailing: Text(
-                      '\$${account['balance'].toStringAsFixed(2)}',
-                      style: TextStyle(
-                        color: account['balance'] < 0 ? Colors.red : Colors.green,
-                        fontWeight: FontWeight.bold,
-                      ),
+          body: SmartRefresher(
+            controller: _refreshController,
+            onRefresh: _onRefresh,
+            enablePullDown: true,
+            enablePullUp: false,
+            header: ClassicHeader(
+              completeText: 'Refresh completed',
+              refreshingText: 'Refreshing...',
+              idleText: 'Pull down to refresh',
+              releaseText: 'Release to refresh',
+            ),
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      'Total Balance: \$${_calculateTotalBalance().toStringAsFixed(2)}',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                     ),
-                    onTap: () => _addOrEditAccount(account: account),
-                    onLongPress: () => _deleteAccount(account['id']),
                   ),
-                );
-              },
+                ),
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                      final account = _accounts[index];
+                      return Card(
+                        margin: EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                        child: ListTile(
+                          title: Text(account['name']),
+                          subtitle: Text('Type: ${account['accountType']}'),
+                          trailing: Text(
+                            '\$${account['balance'].toStringAsFixed(2)}',
+                            style: TextStyle(
+                              color: account['balance'] < 0 ? Colors.red : Colors.green,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          onTap: () => _addOrEditAccount(account: account),
+                          onLongPress: () => _deleteAccount(account['id']),
+                        ),
+                      );
+                    },
+                    childCount: _accounts.length,
+                  ),
+                ),
+                if (_isLoading)
+                  SliverToBoxAdapter(
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+              ],
             ),
           ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _addOrEditAccount(),
-        child: Icon(Icons.add),
-        tooltip: 'Add New Account',
-      ),
+          floatingActionButton: FloatingActionButton(
+            onPressed: () => _addOrEditAccount(),
+            child: Icon(Icons.add),
+            tooltip: 'Add New Account',
+          ),
+        );
+      },
     );
   }
 }

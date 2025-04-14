@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'app_refresh_notifier.dart';
 import 'budget.dart'; // Budget page
 import 'account.dart'; // Account Management page
 import 'report.dart'; // Report page
@@ -6,7 +8,12 @@ import 'setting.dart'; // Setting page
 import 'dashboard_screen.dart'; // Dashboard page
 
 void main() {
-  runApp(const MyApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (context) => AppRefreshNotifier(),
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -21,7 +28,6 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: const MainScreen(),
-      debugShowCheckedModeBanner: false, // Remove debug banner
     );
   }
 }

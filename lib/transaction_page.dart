@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import 'app_refresh_notifier.dart';
 import 'database_helper.dart';
 
 class TransactionPage extends StatefulWidget {
@@ -115,14 +117,15 @@ class _TransactionPageState extends State<TransactionPage> {
   Future<void> _saveTransaction() async {
     if (!_formKey.currentState!.validate()) return;
 
+    final refreshNotifier = Provider.of<AppRefreshNotifier>(context, listen: false);
+
     if (selectedTransactionType == 'Transfer') {
-      await _handleTransfer();
+      await _handleTransfer(refreshNotifier);
       return;
     }
 
     try {
-      final accountId = await DatabaseHelper.instance
-          .getAccountIdByName(selectedAccount!);
+      final accountId = await DatabaseHelper.instance.getAccountIdByName(selectedAccount!);
       final amount = double.parse(amountController.text);
 
       final transaction = {
@@ -137,9 +140,15 @@ class _TransactionPageState extends State<TransactionPage> {
 
       final result = await DatabaseHelper.instance.insertTransaction(transaction);
       if (result > 0) {
-        // Now properly calling _updateAccountBalance
         await _updateAccountBalance(accountId, amount, selectedTransactionType);
-        Navigator.pop(context, true);
+
+        // Notify for both accounts and transactions refresh
+        refreshNotifier.refreshAccounts();
+        refreshNotifier.refreshTransactions();
+
+        if (mounted) {
+          Navigator.pop(context, true);
+        }
       }
     } catch (e) {
       _showError('Failed to save transaction: ${e.toString()}');
@@ -156,7 +165,7 @@ class _TransactionPageState extends State<TransactionPage> {
   }
 
   // Add this new method for handling transfers
-  Future<void> _handleTransfer() async {
+  Future<void> _handleTransfer(AppRefreshNotifier refreshNotifier) async {
     if (!_formKey.currentState!.validate()) return;
 
     if (selectedAccount == null || selectedCategory == null) {
@@ -170,29 +179,23 @@ class _TransactionPageState extends State<TransactionPage> {
     }
 
     try {
-      final fromAccountId = await DatabaseHelper.instance
-          .getAccountIdByName(selectedAccount!);
-      final toAccountId = await DatabaseHelper.instance
-          .getAccountIdByName(selectedCategory!);
+      final fromAccountId = await DatabaseHelper.instance.getAccountIdByName(selectedAccount!);
+      final toAccountId = await DatabaseHelper.instance.getAccountIdByName(selectedCategory!);
       final amount = double.parse(amountController.text);
 
-      // Create a single transfer transaction record
       final transfer = {
-        'type': 'Transfer',  // Changed from separate Income/Expense
+        'type': 'Transfer',
         'date': _formatDate(selectedDate),
-        'from_account_id': fromAccountId,  // New field
-        'to_account_id': toAccountId,      // New field
+        'from_account_id': fromAccountId,
+        'to_account_id': toAccountId,
         'amount': amount,
-        'note': noteController.text,      // User's original note
+        'note': noteController.text,
       };
 
-      // Execute in a transaction
       final db = await DatabaseHelper.instance.database;
       await db.transaction((txn) async {
-        // First insert the transfer record
         await txn.insert('transactions', transfer);
 
-        // Update both account balances
         final fromAccount = await txn.query(
           'accounts',
           where: 'id = ?',
@@ -223,7 +226,13 @@ class _TransactionPageState extends State<TransactionPage> {
         );
       });
 
-      Navigator.pop(context, true);
+      // Notify for both accounts refresh
+      refreshNotifier.refreshAccounts();
+      refreshNotifier.refreshTransactions();
+
+      if (mounted) {
+        Navigator.pop(context, true);
+      }
     } catch (e) {
       _showError('Failed to process transfer: ${e.toString()}');
     }
@@ -396,5 +405,11 @@ class _TransactionPageState extends State<TransactionPage> {
         ),
       ),
     );
+  }
+}
+
+class RefreshNotifier extends ChangeNotifier {
+  void refreshData() {
+    notifyListeners();
   }
 }
