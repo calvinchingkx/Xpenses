@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/cupertino.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -21,36 +22,52 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'budget.db');
 
-    return openDatabase(
+    return await openDatabase(
       path,
-      version: 5,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onOpen: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
+        await _validateSchema(db); // Add schema validation
       },
     );
   }
 
+  Future<void> _validateSchema(Database db) async {
+    try {
+      // Test if the budgets table has the category column
+      await db.rawQuery('SELECT category FROM budgets LIMIT 1');
+    } catch (e) {
+      debugPrint('Schema validation failed, attempting repair...');
+      // If the query fails, force a schema update
+      await _onUpgrade(db, 6, 7);
+    }
+  }
+
   Future<void> _onCreate(Database db, int version) async {
     await db.execute('''CREATE TABLE accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    balance REAL DEFAULT 0.0,
-    accountType TEXT DEFAULT 'Cash'
-  )''');
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      balance REAL DEFAULT 0.0,
+      accountType TEXT DEFAULT 'Cash',
+      color INTEGER DEFAULT 0xFF2196F3, -- Added in version 7
+      isArchived INTEGER DEFAULT 0 -- Added in version 7
+    )''');
 
     await db.execute('''CREATE TABLE transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT,
-      date TEXT,
+      type TEXT NOT NULL,
+      date TEXT NOT NULL,
       account_id INTEGER,
       from_account_id INTEGER,
       to_account_id INTEGER,
       category TEXT,
       subcategory TEXT DEFAULT 'No Subcategory',
-      amount REAL,
+      amount REAL NOT NULL,
       note TEXT,
+      isRecurring INTEGER DEFAULT 0, -- Added in version 7
+      recurrencePattern TEXT, -- Added in version 7
       FOREIGN KEY(account_id) REFERENCES accounts(id),
       FOREIGN KEY(from_account_id) REFERENCES accounts(id),
       FOREIGN KEY(to_account_id) REFERENCES accounts(id)
@@ -59,30 +76,106 @@ class DatabaseHelper {
     await db.execute('''CREATE TABLE categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      type TEXT NOT NULL
+      type TEXT NOT NULL,
+      iconCode INTEGER DEFAULT 0, -- Added in version 7
+      color INTEGER DEFAULT 0xFF2196F3 -- Added in version 7
     )''');
 
     await db.execute('''CREATE TABLE subcategories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
+      name TEXT NOT NULL,
       category_id INTEGER,
       FOREIGN KEY(category_id) REFERENCES categories(id)
     )''');
 
     await db.execute('''CREATE TABLE budgets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      category_name TEXT,
-      type TEXT,
-      budget_limit REAL,
+      category TEXT NOT NULL,  // Changed from category_name to category
+      type TEXT NOT NULL,
+      budget_limit REAL NOT NULL,
       spent REAL DEFAULT 0.0,
-      created_at TEXT
+      created_at TEXT,
+      period TEXT DEFAULT 'monthly',
+      start_date TEXT,
+      end_date TEXT
     )''');
 
+    // Added in version 7
+    await db.execute('''CREATE TABLE goals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      target_amount REAL NOT NULL,
+      saved_amount REAL DEFAULT 0.0,
+      target_date TEXT,
+      created_at TEXT,
+      account_id INTEGER,
+      FOREIGN KEY(account_id) REFERENCES accounts(id)
+    )''');
+
+    // Create indexes
     await db.execute('CREATE INDEX idx_transactions_date ON transactions(date)');
     await db.execute('CREATE INDEX idx_transactions_type ON transactions(type)');
+    await db.execute('CREATE INDEX idx_transactions_recurring ON transactions(isRecurring)'); // Added in version 7
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    // Migration from version 6 to 7
+    try {
+      final columns = await db.rawQuery("PRAGMA table_info(budgets)");
+      final hasCategoryName = columns.any((col) => col['name'] == 'category_name');
+      final hasCategory = columns.any((col) => col['name'] == 'category');
+
+      if (hasCategoryName && !hasCategory) {
+        // Create new table with correct schema and migrate data
+        await db.execute('''
+        CREATE TABLE budgets_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          category TEXT NOT NULL,
+          type TEXT NOT NULL,
+          budget_limit REAL NOT NULL,
+          spent REAL DEFAULT 0.0,
+          created_at TEXT,
+          period TEXT DEFAULT 'monthly',
+          start_date TEXT,
+          end_date TEXT
+        )
+      ''');
+
+        await db.execute('''
+        INSERT INTO budgets_new (id, category, type, budget_limit, spent, created_at)
+        SELECT id, category_name, type, budget_limit, spent, created_at FROM budgets
+      ''');
+
+        await db.execute('DROP TABLE budgets');
+        await db.execute('ALTER TABLE budgets_new RENAME TO budgets');
+      }
+      else if (!hasCategory) {
+        await db.execute('ALTER TABLE budgets ADD COLUMN category TEXT NOT NULL DEFAULT ""');
+      }
+    } catch (e) {
+      debugPrint('Error fixing category column: $e');
+    }
+
+    if (oldVersion < 7) {
+      try {
+        // First check if we need to rename category_name to category
+        final columns = await db.rawQuery("PRAGMA table_info(budgets)");
+        final hasCategoryName = columns.any((col) => col['name'] == 'category_name');
+        final hasCategory = columns.any((col) => col['name'] == 'category');
+
+        if (hasCategoryName && !hasCategory) {
+          await db.execute('ALTER TABLE budgets RENAME COLUMN category_name TO category');
+        } else if (!hasCategoryName && !hasCategory) {
+          await db.execute('ALTER TABLE budgets ADD COLUMN category TEXT NOT NULL DEFAULT ""');
+        }
+
+        // ... rest of your version 7 upgrades
+      } catch (e) {
+        debugPrint('Migration error: $e');
+      }
+    }
+
+    // Keep existing migrations for older versions
     if (oldVersion < 2) {
       await db.execute('ALTER TABLE transactions ADD COLUMN subcategory TEXT DEFAULT "No Subcategory"');
     }
@@ -92,11 +185,14 @@ class DatabaseHelper {
     if (oldVersion < 4) {
       await db.execute('ALTER TABLE transactions ADD COLUMN from_account_id INTEGER');
       await db.execute('ALTER TABLE transactions ADD COLUMN to_account_id INTEGER');
-      await db.execute('CREATE TABLE budgets (id INTEGER PRIMARY KEY AUTOINCREMENT, category_name TEXT, type TEXT, budget_limit REAL, spent REAL DEFAULT 0.0, created_at TEXT)');
+      await db.execute('CREATE TABLE budgets (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT, type TEXT, budget_limit REAL, spent REAL DEFAULT 0.0, created_at TEXT)');
     }
     if (oldVersion < 5) {
       await db.execute('CREATE INDEX idx_transactions_date ON transactions(date)');
       await db.execute('CREATE INDEX idx_transactions_type ON transactions(type)');
+    }
+    if (oldVersion < 6) {
+      // Any migrations you added in version 6 would go here
     }
   }
 
@@ -563,26 +659,161 @@ class DatabaseHelper {
     return categories;  // Return categories with their subcategories
   }
 
-  Future<int> addBudget(String category, String type, double limit) async {
+  // Goals CRUD operations
+  Future<int> addGoal(Map<String, dynamic> goal) async {
     final db = await database;
-    final budget = {
-      'category_name': category,
-      'type': type,
-      'budget_limit': limit,
-      'spent': 0.0, // Default value
-      'created_at': DateTime.now().toIso8601String(), // Current timestamp
-    };
-    return await db.insert('budgets', budget);
+    return await db.insert('goals', {
+      'name': goal['name'],
+      'target_amount': goal['target_amount'],
+      'saved_amount': goal['saved_amount'] ?? 0.0,
+      'target_date': goal['target_date'],
+      'created_at': goal['created_at'] ?? DateTime.now().toIso8601String(),
+      'account_id': goal['account_id'],
+    });
   }
 
-  /// Get all budgets from the database
+  Future<int> updateGoal(Map<String, dynamic> goal) async {
+    final db = await database;
+    return await db.update(
+      'goals',
+      {
+        'name': goal['name'],
+        'target_amount': goal['target_amount'],
+        'saved_amount': goal['saved_amount'],
+        'target_date': goal['target_date'],
+        'account_id': goal['account_id'],
+      },
+      where: 'id = ?',
+      whereArgs: [goal['id']],
+    );
+  }
+
+  Future<int> deleteGoal(int id) async {
+    final db = await database;
+    return await db.delete('goals', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<List<Map<String, dynamic>>> getGoals() async {
+    final db = await database;
+    return await db.query('goals');
+  }
+
+  // Recurring transactions
+  Future<List<Map<String, dynamic>>> getRecurringTransactions() async {
+    final db = await database;
+    return await db.query(
+      'transactions',
+      where: 'isRecurring = 1',
+    );
+  }
+
+  // Account color and archive status
+  Future<int> updateAccountColor(int accountId, int color) async {
+    final db = await database;
+    return await db.update(
+      'accounts',
+      {'color': color},
+      where: 'id = ?',
+      whereArgs: [accountId],
+    );
+  }
+
+  Future<int> toggleAccountArchiveStatus(int accountId, bool isArchived) async {
+    final db = await database;
+    return await db.update(
+      'accounts',
+      {'isArchived': isArchived ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [accountId],
+    );
+  }
+
+  // Budget period management
+  Future<int> updateBudgetPeriod(int budgetId, String period, {String? startDate, String? endDate}) async {
+    final db = await database;
+    return await db.update(
+      'budgets',
+      {
+        'period': period,
+        'start_date': startDate,
+        'end_date': endDate,
+      },
+      where: 'id = ?',
+      whereArgs: [budgetId],
+    );
+  }
+
+  // Category icons and colors
+  Future<int> updateCategoryAppearance(int categoryId, int iconCode, int color) async {
+    final db = await database;
+    return await db.update(
+      'categories',
+      {
+        'iconCode': iconCode,
+        'color': color,
+      },
+      where: 'id = ?',
+      whereArgs: [categoryId],
+    );
+  }
+
+  Future<int> addBudget(Map<String, dynamic> budget) async {
+    final db = await database;
+    return await db.insert('budgets', {
+      'category': budget['category'],  // Make sure this matches your schema
+      'type': budget['type'],
+      'budget_limit': budget['amount'],
+      'spent': budget['spent'] ?? 0.0,
+      'created_at': budget['created_at'] ?? DateTime.now().toIso8601String(),
+      'period': budget['period'] ?? 'monthly',
+    });
+  }
+
   Future<List<Map<String, dynamic>>> getBudgets() async {
+    final db = await database;
     try {
-      final db = await database;
       return await db.query('budgets');
     } catch (e) {
-      print('Budgets table not available yet: $e');
-      return [];
+      // If query fails, try with alternative column name
+      try {
+        return await db.rawQuery('''
+        SELECT 
+          id, 
+          category_name as category, 
+          type, 
+          budget_limit, 
+          spent, 
+          created_at,
+          COALESCE(period, 'monthly') as period
+        FROM budgets
+      ''');
+      } catch (e) {
+        debugPrint('Error fetching budgets: $e');
+        return [];
+      }
     }
+  }
+
+// Update budget method
+  Future<int> updateBudget(Map<String, dynamic> budget) async {
+    final db = await database;
+    return await db.update(
+      'budgets',
+      {
+        'category': budget['category'],
+        'budget_limit': budget['amount'],
+      },
+      where: 'id = ?',
+      whereArgs: [budget['id']],
+    );
+  }
+
+  Future<int> deleteBudget(int id) async {
+    final db = await database;
+    return await db.delete(
+      'budgets',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 }
