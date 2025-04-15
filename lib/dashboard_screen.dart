@@ -3,7 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:pull_to_refresh/pull_to_refresh.dart';
 import 'package:provider/provider.dart';
 import 'database_helper.dart';
-import 'transaction_page.dart';
+import 'transaction_add.dart';
 import 'transaction_detail.dart';
 import 'app_refresh_notifier.dart';
 

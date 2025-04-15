@@ -125,6 +125,18 @@ class DatabaseHelper {
     }
   }
 
+  Future<double> getAccountBalance(int accountId) async {
+    final db = await database;
+    final result = await db.query(
+      'accounts',
+      columns: ['balance'],
+      where: 'id = ?',
+      whereArgs: [accountId],
+    );
+    if (result.isEmpty) throw Exception('Account not found');
+    return (result.first['balance'] as num).toDouble();
+  }
+
   Future<Map<String, dynamic>> getAccountById(int accountId) async {
     final db = await database;
     final result = await db.query(
@@ -186,6 +198,79 @@ class DatabaseHelper {
     } catch (e) {
       print('Error updating account: $e');
       return -1;
+    }
+  }
+
+  Future<double> calculateAccountBalance(int accountId) async {
+    final db = await database;
+    final transactions = await db.query(
+      'transactions',
+      where: 'account_id = ? OR from_account_id = ? OR to_account_id = ?',
+      whereArgs: [accountId, accountId, accountId],
+    );
+
+    double balance = 0.0;
+
+    for (final t in transactions) {
+      final amount = (t['amount'] as num).toDouble();
+      final type = t['type'] as String;
+
+      switch (type) {
+        case 'Income':
+          if (t['account_id'] == accountId) {
+            balance += amount;
+          }
+          break;
+        case 'Expense':
+          if (t['account_id'] == accountId) {
+            balance -= amount;
+          }
+          break;
+        case 'Transfer':
+          if (t['from_account_id'] == accountId) {
+            balance -= amount;
+          }
+          if (t['to_account_id'] == accountId) {
+            balance += amount;
+          }
+          break;
+      }
+    }
+
+    return balance;
+  }
+
+  Future<int> forceUpdateAccountBalance(int accountId, double newBalance) async {
+    final db = await database;
+    return await db.rawUpdate(
+      'UPDATE accounts SET balance = ? WHERE id = ?',
+      [newBalance, accountId],
+    );
+  }
+
+  Future<void> _updateAccountBalance(
+      DatabaseExecutor db,
+      int accountId,
+      double amountChange
+      ) async {
+    try {
+      // Use precise raw SQL to avoid any doubling
+      await db.rawUpdate(
+        'UPDATE accounts SET balance = ROUND(balance + ?, 2) WHERE id = ?',
+        [amountChange, accountId],
+      );
+
+      // Verify the update
+      final updatedAccount = await db.query(
+        'accounts',
+        where: 'id = ?',
+        whereArgs: [accountId],
+      );
+
+      debugPrint('Updated account $accountId balance: ${updatedAccount.first['balance']}');
+    } catch (e) {
+      debugPrint('Error updating account balance: $e');
+      rethrow;
     }
   }
 
@@ -275,7 +360,11 @@ class DatabaseHelper {
     final db = await database;
     try {
       return await db.transaction((txn) async {
-        // Insert the transaction (keeping your original structure)
+        // Convert amount to double once
+        final amount = (transaction['amount'] as num).toDouble();
+        debugPrint('Original amount: $amount');
+
+        // Insert the transaction record
         final transactionId = await txn.insert('transactions', {
           'type': transaction['type'],
           'date': transaction['date'],
@@ -284,32 +373,52 @@ class DatabaseHelper {
           'to_account_id': transaction['to_account_id'],
           'category': transaction['category'],
           'subcategory': transaction['subcategory'] ?? 'No Subcategory',
-          'amount': transaction['amount'],
+          'amount': amount, // Use the converted amount
           'note': transaction['note'],
         });
 
-        // Update account balance if this isn't a transfer
-        if (transaction['account_id'] != null &&
-            transaction['type'] != 'Transfer') {
-          final account = await txn.query(
-            'accounts',
-            where: 'id = ?',
-            whereArgs: [transaction['account_id']],
-          );
-          if (account.isNotEmpty) {
-            final currentBalance = account.first['balance'] as double;
-            final newBalance = transaction['type'] == 'Income'
-                ? currentBalance + (transaction['amount'] as num).toDouble()
-                : currentBalance - (transaction['amount'] as num).toDouble();
+        // Handle balance updates
+        switch (transaction['type']) {
+          case 'Income':
+            if (transaction['account_id'] != null) {
+              await _updateAccountBalance(
+                txn,
+                transaction['account_id'] as int,
+                amount,
+              );
+            }
+            break;
 
-            await txn.update(
-              'accounts',
-              {'balance': newBalance},
-              where: 'id = ?',
-              whereArgs: [transaction['account_id']],
-            );
-          }
+          case 'Expense':
+            if (transaction['account_id'] != null) {
+              await _updateAccountBalance(
+                txn,
+                transaction['account_id'] as int,
+                -amount,
+              );
+            }
+            break;
+
+          case 'Transfer':
+            if (transaction['from_account_id'] != null &&
+                transaction['to_account_id'] != null) {
+              // Deduct from source
+              await _updateAccountBalance(
+                txn,
+                transaction['from_account_id'] as int,
+                -amount,
+              );
+              // Add to destination
+              await _updateAccountBalance(
+                txn,
+                transaction['to_account_id'] as int,
+                amount,
+              );
+            }
+            break;
         }
+
+        debugPrint('Database received amount: ${transaction['amount']} (${transaction['amount'].runtimeType})');
 
         return transactionId;
       });
@@ -331,39 +440,50 @@ class DatabaseHelper {
 
         if (transaction.isEmpty) return 0;
         final t = transaction.first;
+        final amount = (t['amount'] as num).toDouble();
+        debugPrint('Deleting transaction with amount: $amount');
 
-        // Update account balance
-        if (t['account_id'] != null) {
-          final amount = (t['amount'] as num).toDouble();
-          final adjustment = t['type'] == 'Income' ? -amount : amount;
+        // Reverse the original transaction
+        switch (t['type'] as String) {
+          case 'Income':
+            if (t['account_id'] != null) {
+              await _updateAccountBalance(
+                txn,
+                t['account_id'] as int,
+                -amount,
+              );
+            }
+            break;
 
-          final account = await txn.query(
-            'accounts',
-            where: 'id = ?',
-            whereArgs: [t['account_id'] as int],
-          );
+          case 'Expense':
+            if (t['account_id'] != null) {
+              await _updateAccountBalance(
+                txn,
+                t['account_id'] as int,
+                amount,
+              );
+            }
+            break;
 
-          if (account.isNotEmpty) {
-            final newBalance = (account.first['balance'] as num).toDouble() + adjustment;
-            await txn.update(
-              'accounts',
-              {'balance': newBalance},
-              where: 'id = ?',
-              whereArgs: [t['account_id'] as int],
-            );
-          }
+          case 'Transfer':
+            if (t['from_account_id'] != null && t['to_account_id'] != null) {
+              // Return to source
+              await _updateAccountBalance(
+                txn,
+                t['from_account_id'] as int,
+                amount,
+              );
+              // Deduct from destination
+              await _updateAccountBalance(
+                txn,
+                t['to_account_id'] as int,
+                -amount,
+              );
+            }
+            break;
         }
 
-        // Update budget if this was an expense
-        if (t['type'] == 'Expense' && t['category'] != null) {
-          await _updateBudgetSpent(
-              txn,
-              t['category'] as String,
-              -(t['amount'] as num).toDouble()
-          );
-        }
-
-        // Delete the transaction
+        // Finally delete the transaction
         return await txn.delete(
           'transactions',
           where: 'id = ?',
@@ -528,37 +648,6 @@ class DatabaseHelper {
       where: 'id = ?',
       whereArgs: [budget['id']],
     );
-  }
-
-  Future<void> _updateBudgetSpent(DatabaseExecutor db, String category, double amount) async {
-    try {
-      // First approach: Use raw SQL for atomic update
-      await db.rawUpdate(
-        'UPDATE budgets SET spent = spent + ? WHERE category = ?',
-        [amount, category],
-      );
-    } catch (e) {
-      debugPrint('Error updating budget spent with rawUpdate: $e');
-      try {
-        // Fallback: Query then update if rawUpdate fails
-        final budget = await db.query(
-          'budgets',
-          where: 'category = ?',
-          whereArgs: [category],
-        );
-        if (budget.isNotEmpty) {
-          final newSpent = (budget.first['spent'] as num).toDouble() + amount;
-          await db.update(
-            'budgets',
-            {'spent': newSpent},
-            where: 'id = ?',
-            whereArgs: [budget.first['id']],
-          );
-        }
-      } catch (e) {
-        debugPrint('Fallback budget update failed: $e');
-      }
-    }
   }
 
   Future<int> deleteBudget(int id) async {

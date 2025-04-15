@@ -56,6 +56,14 @@ class _AccountScreenState extends State<AccountScreen> {
       if (mounted) {
         setState(() => _accounts = _sortAccounts(validatedAccounts));
       }
+
+      // Add verification step
+      await _verifyAccountBalances();
+      // Reload after verification if needed
+      if (mounted) {
+        final refreshedAccounts = await DatabaseHelper.instance.getAccounts();
+        setState(() => _accounts = _sortAccounts(refreshedAccounts));
+      }
     } catch (e) {
       if (mounted) _showError('Failed to load accounts: ${e.toString()}');
     } finally {
@@ -193,6 +201,40 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  Future<void> _verifyAccountBalances() async {
+    debugPrint('Verifying all account balances...');
+    for (final account in _accounts) {
+      await _verifySingleAccountBalance(account['id'] as int);
+    }
+  }
+
+  Future<void> _verifySingleAccountBalance(int accountId) async {
+    try {
+      final dbHelper = DatabaseHelper.instance;
+
+      // Get stored balance
+      final storedBalance = await dbHelper.getAccountBalance(accountId);
+
+      // Calculate balance from transactions
+      final calculatedBalance = await dbHelper.calculateAccountBalance(accountId);
+
+      debugPrint('''
+    Account $accountId verification:
+    Stored: $storedBalance
+    Calculated: $calculatedBalance
+    Difference: ${calculatedBalance - storedBalance}
+    ''');
+
+      // Correct if discrepancy found
+      if (calculatedBalance != storedBalance) {
+        debugPrint('Correcting balance for account $accountId');
+        await dbHelper.forceUpdateAccountBalance(accountId, calculatedBalance);
+      }
+    } catch (e) {
+      debugPrint('Error verifying account $accountId: $e');
+    }
+  }
+
   double _calculateTotalBalance() {
     return _accounts.fold(0.0, (sum, account) =>
     sum + ((account['balance'] as num?)?.toDouble() ?? 0.0));
@@ -210,6 +252,11 @@ class _AccountScreenState extends State<AccountScreen> {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('Building AccountScreen with ${_accounts.length} accounts');
+    _accounts.forEach((account) {
+      debugPrint('Account ${account['id']}: ${account['name']} = ${account['balance']}');
+    });
+
     return Consumer<AppRefreshNotifier>(
       builder: (context, refreshNotifier, _) {
         if (refreshNotifier.shouldRefreshAccounts) {
@@ -266,7 +313,7 @@ class _AccountScreenState extends State<AccountScreen> {
         _accounts = _sortAccounts(_accounts);
       }),
       itemBuilder: (context) => [
-        _buildSortMenuItem('custom', 'Sort by Category'),
+        _buildSortMenuItem('custom', 'Sort by Default'),
         _buildSortMenuItem('name', 'Sort by Name'),
         _buildSortMenuItem('accountType', 'Sort by Type'),
         _buildSortMenuItem('balance', 'Sort by Balance'),
