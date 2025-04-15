@@ -22,6 +22,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final RefreshController _refreshController = RefreshController();
   bool _isLoading = false;
 
+  late final DateFormat _monthFormatter = DateFormat('MMM yyyy');
+  late final DateFormat _displayDateFormatter = DateFormat('dd/MM/yyyy (EEE)');
+  late final DateFormat _storageDateFormatter = DateFormat('dd/MM/yyyy');
+  late final NumberFormat _currencyFormatter =
+  NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
   @override
   void initState() {
     super.initState();
@@ -41,9 +47,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _refreshListener() {
-    if (mounted) {
-      _refreshData();
-    }
+    if (mounted) _refreshData();
   }
 
   Future<void> _onRefresh() async {
@@ -56,23 +60,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     setState(() => _isLoading = true);
     try {
-      final income = await DatabaseHelper().getTotalByTypeForMonth(
+      final results = await Future.wait([
+        DatabaseHelper().getTotalByTypeForMonth(
           "Income",
           currentMonthDate.month,
-          currentMonthDate.year
-      );
-      final expense = await DatabaseHelper().getTotalByTypeForMonth(
+          currentMonthDate.year,
+        ),
+        DatabaseHelper().getTotalByTypeForMonth(
           "Expense",
           currentMonthDate.month,
-          currentMonthDate.year
-      );
-      final transactions = await _loadTransactions();
+          currentMonthDate.year,
+        ),
+        _loadTransactions(),
+      ]);
 
       if (mounted) {
         setState(() {
-          incomeTotal = income ?? 0.0;
-          expenseTotal = expense ?? 0.0;
-          categorizedTransactions = transactions;
+          incomeTotal = (results[0] as num?)?.toDouble() ?? 0.0;
+          expenseTotal = (results[1] as num?)?.toDouble() ?? 0.0;
+          categorizedTransactions = results[2] as Map<String, List<Map<String, dynamic>>>;
         });
       }
     } catch (e) {
@@ -88,9 +94,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  String get formattedMonth {
-    return DateFormat('MMM yyyy').format(currentMonthDate);
-  }
+  String get formattedMonth => _monthFormatter.format(currentMonthDate);
 
   Future<void> _selectMonth() async {
     final DateTime? picked = await showDatePicker(
@@ -111,14 +115,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _previousMonth() {
     setState(() {
-      currentMonthDate = DateTime(currentMonthDate.year, currentMonthDate.month - 1, 1);
+      currentMonthDate = DateTime(
+          currentMonthDate.year,
+          currentMonthDate.month - 1,
+          1
+      );
     });
     _refreshData();
   }
 
   void _nextMonth() {
     setState(() {
-      currentMonthDate = DateTime(currentMonthDate.year, currentMonthDate.month + 1, 1);
+      currentMonthDate = DateTime(
+          currentMonthDate.year,
+          currentMonthDate.month + 1,
+          1
+      );
     });
     _refreshData();
   }
@@ -132,17 +144,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final Map<String, List<Map<String, dynamic>>> grouped = {};
 
     for (var transaction in allTransactions) {
-      final date = _DateUtils.tryParse(transaction['date']);
+      final date = _tryParseDate(transaction['date'] as String);
       if (date == null) continue;
 
-      final formattedDate = _DateUtils.formatStorageDate(date);
+      final formattedDate = _storageDateFormatter.format(date);
       grouped.putIfAbsent(formattedDate, () => []).add(transaction);
     }
 
     final sortedKeys = grouped.keys.toList()
-      ..sort((a, b) => _DateUtils.parse(b)!.compareTo(_DateUtils.parse(a)!));
+      ..sort((a, b) => _parseDate(b)!.compareTo(_parseDate(a)!));
 
     return {for (var key in sortedKeys) key: grouped[key]!};
+  }
+
+  DateTime? _tryParseDate(String dateString) {
+    try {
+      return _storageDateFormatter.parse(dateString.split(' ').first);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  DateTime? _parseDate(String dateString) {
+    return _tryParseDate(dateString);
   }
 
   void _showCustomBottomSheet(Widget child, {VoidCallback? onDismiss}) {
@@ -152,28 +176,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black54,
       isDismissible: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-      ),
-      builder: (_) => GestureDetector(
-        onTap: () => Navigator.pop(context),
-        behavior: HitTestBehavior.opaque,
-        child: DraggableScrollableSheet(
+      builder: (BuildContext context) {
+        return DraggableScrollableSheet(
           initialChildSize: 0.75,
           minChildSize: 0.75,
           maxChildSize: 0.75,
-          builder: (_, controller) => GestureDetector(
-            onTap: () {},
-            child: Container(
+          builder: (BuildContext context, ScrollController scrollController) {
+            return Container(
               decoration: const BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
               ),
               child: child,
-            ),
-          ),
-        ),
-      ),
+            );
+          },
+        );
+      },
     ).then((_) => onDismiss?.call());
   }
 
@@ -195,54 +213,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           body: Column(
             children: [
-              Container(
-                color: Theme.of(context).scaffoldBackgroundColor,
-                child: Column(
-                  children: [
-                    const Divider(thickness: 1, color: Colors.black45),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 0.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.arrow_left),
-                            onPressed: _previousMonth,
-                          ),
-                          GestureDetector(
-                            onTap: _selectMonth,
-                            child: Text(
-                              formattedMonth,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blueGrey,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.arrow_right),
-                            onPressed: _nextMonth,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(thickness: 2, color: Colors.black45),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          _buildSummaryText('Income', _formatCurrency(incomeTotal), Colors.blueGrey),
-                          _buildSummaryText('Expenses', _formatCurrency(expenseTotal), Colors.red),
-                          _buildSummaryText('Balance', _formatCurrency(incomeTotal - expenseTotal), Colors.green),
-                        ],
-                      ),
-                    ),
-                    const Divider(thickness: 2, color: Colors.black45),
-                  ],
-                ),
-              ),
+              _buildHeaderSection(context),
               Expanded(
                 child: SmartRefresher(
                   controller: _refreshController,
@@ -255,7 +226,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     idleText: 'Pull down to refresh',
                     releaseText: 'Release to refresh',
                   ),
-                  child: _buildTransactionList(),
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _buildTransactionList(),
                 ),
               ),
             ],
@@ -269,6 +242,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildHeaderSection(BuildContext context) {
+    return Container(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Column(
+        children: [
+          const Divider(thickness: 1, color: Colors.black45),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 0.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_left),
+                  onPressed: _previousMonth,
+                ),
+                GestureDetector(
+                  onTap: _selectMonth,
+                  child: Text(
+                    formattedMonth,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blueGrey,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.arrow_right),
+                  onPressed: _nextMonth,
+                ),
+              ],
+            ),
+          ),
+          const Divider(thickness: 2, color: Colors.black45),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildSummaryText('Income', _formatCurrency(incomeTotal), Colors.blueGrey),
+                _buildSummaryText('Expenses', _formatCurrency(expenseTotal), Colors.red),
+                _buildSummaryText('Balance', _formatCurrency(incomeTotal - expenseTotal), Colors.green),
+              ],
+            ),
+          ),
+          const Divider(thickness: 2, color: Colors.black45),
+        ],
+      ),
     );
   }
 
@@ -287,12 +311,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.only(bottom: 80), // Space for FAB
+      padding: const EdgeInsets.only(bottom: 80),
       itemCount: categorizedTransactions.length,
       itemBuilder: (context, index) {
         final date = categorizedTransactions.keys.elementAt(index);
         final transactions = categorizedTransactions[date]!;
-        final parsedDate = _DateUtils.parse(date)!;
+        final parsedDate = _parseDate(date)!;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -301,7 +325,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
               child: Text(
-                _DateUtils.formatDisplayDate(parsedDate),
+                _displayDateFormatter.format(parsedDate),
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -347,10 +371,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   String _formatCurrency(double amount) {
-    return NumberFormat.currency(
-      symbol: '\$',
-      decimalDigits: 2,
-    ).format(amount);
+    return _currencyFormatter.format(amount);
   }
 }
 
@@ -415,7 +436,7 @@ class _TransactionTile extends StatelessWidget {
               ),
             ),
             Text(
-              _formatCurrency(transaction['amount'] ?? 0.0),
+              _formatCurrency((transaction['amount'] as num).toDouble()),
               style: TextStyle(
                 fontSize: 16,
                 color: amountColor,
@@ -432,27 +453,5 @@ class _TransactionTile extends StatelessWidget {
       symbol: '\$',
       decimalDigits: 2,
     ).format(amount);
-  }
-}
-
-class _DateUtils {
-  static String formatDisplayDate(DateTime date) {
-    return DateFormat('dd/MM/yyyy (EEE)').format(date);
-  }
-
-  static String formatStorageDate(DateTime date) {
-    return DateFormat('dd/MM/yyyy').format(date);
-  }
-
-  static DateTime? tryParse(String dateString) {
-    try {
-      return DateFormat('dd/MM/yyyy').parse(dateString.split(' ').first);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  static DateTime? parse(String dateString) {
-    return tryParse(dateString);
   }
 }

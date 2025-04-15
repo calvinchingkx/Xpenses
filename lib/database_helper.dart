@@ -24,7 +24,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'budget.db');
 
     // Delete the database if it exists
-    await deleteDatabase(path);
+    //await deleteDatabase(path);
 
     // Create a new database from scratch without versioning
     return await openDatabase(
@@ -274,14 +274,41 @@ class DatabaseHelper {
   Future<int> insertTransaction(Map<String, dynamic> transaction) async {
     final db = await database;
     try {
-      // Start a transaction
       return await db.transaction((txn) async {
-        // Insert the transaction
-        final transactionId = await txn.insert('transactions', transaction);
+        // Insert the transaction (keeping your original structure)
+        final transactionId = await txn.insert('transactions', {
+          'type': transaction['type'],
+          'date': transaction['date'],
+          'account_id': transaction['account_id'],
+          'from_account_id': transaction['from_account_id'],
+          'to_account_id': transaction['to_account_id'],
+          'category': transaction['category'],
+          'subcategory': transaction['subcategory'] ?? 'No Subcategory',
+          'amount': transaction['amount'],
+          'note': transaction['note'],
+        });
 
-        // If this is an expense, update the corresponding budget
-        if (transaction['type'] == 'Expense' && transaction['category'] != null) {
-          await _updateBudgetSpent(txn, transaction['category'], transaction['amount']);
+        // Update account balance if this isn't a transfer
+        if (transaction['account_id'] != null &&
+            transaction['type'] != 'Transfer') {
+          final account = await txn.query(
+            'accounts',
+            where: 'id = ?',
+            whereArgs: [transaction['account_id']],
+          );
+          if (account.isNotEmpty) {
+            final currentBalance = account.first['balance'] as double;
+            final newBalance = transaction['type'] == 'Income'
+                ? currentBalance + (transaction['amount'] as num).toDouble()
+                : currentBalance - (transaction['amount'] as num).toDouble();
+
+            await txn.update(
+              'accounts',
+              {'balance': newBalance},
+              where: 'id = ?',
+              whereArgs: [transaction['account_id']],
+            );
+          }
         }
 
         return transactionId;
