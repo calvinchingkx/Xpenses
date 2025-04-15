@@ -736,12 +736,14 @@ class DatabaseHelper {
   Future<int> addBudget(Map<String, dynamic> budget) async {
     final db = await database;
     return await db.insert('budgets', {
-      'category': budget['category'],  // Make sure this matches your schema
-      'type': budget['type'],
-      'budget_limit': budget['amount'],
-      'spent': budget['spent'] ?? 0.0,
+      'category': budget['category'],
+      'type': budget['type'] ?? 'expense',
+      'budget_limit': budget['budget_limit'],
+      'current_month_spent': budget['current_month_spent'] ?? 0.0,
+      'previous_months_spent': budget['previous_months_spent'] ?? 0.0,
+      'year_month': budget['year_month'],
       'created_at': budget['created_at'] ?? DateTime.now().toIso8601String(),
-      'period': budget['period'] ?? 'monthly',
+      'is_active': budget['is_active'] ?? 1
     });
   }
 
@@ -751,7 +753,8 @@ class DatabaseHelper {
       'budgets',
       {
         'category': budget['category'],
-        'budget_limit': budget['amount'],
+        'budget_limit': budget['budget_limit'],
+        // Add other fields you want to update
       },
       where: 'id = ?',
       whereArgs: [budget['id']],

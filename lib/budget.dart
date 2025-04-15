@@ -31,7 +31,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
         _budgets = _sortBudgets(budgets.where((b) =>
         b['id'] != null &&
             b['budget_limit'] != null &&
-            b['spent'] != null &&
+            b['current_month_spent'] != null &&
             b['category'] != null).toList());
         _categories = categories;
       });
@@ -51,12 +51,12 @@ class _BudgetScreenState extends State<BudgetScreen> {
           final bLimit = (b['budget_limit'] as num).toDouble();
           return _sortAscending ? aLimit.compareTo(bLimit) : bLimit.compareTo(aLimit);
         case 'spent':
-          final aSpent = (a['spent'] as num).toDouble();
-          final bSpent = (b['spent'] as num).toDouble();
+          final aSpent = (a['current_month_spent'] as num).toDouble();
+          final bSpent = (b['current_month_spent'] as num).toDouble();
           return _sortAscending ? aSpent.compareTo(bSpent) : bSpent.compareTo(aSpent);
         case 'remaining':
-          final aRemaining = (a['budget_limit'] as num).toDouble() - (a['spent'] as num).toDouble();
-          final bRemaining = (b['budget_limit'] as num).toDouble() - (b['spent'] as num).toDouble();
+          final aRemaining = (a['budget_limit'] as num).toDouble() - (a['current_month_spent'] as num).toDouble();
+          final bRemaining = (b['budget_limit'] as num).toDouble() - (b['current_month_spent'] as num).toDouble();
           return _sortAscending ? aRemaining.compareTo(bRemaining) : bRemaining.compareTo(aRemaining);
         default: // category
           final aCat = a['category']?.toString().toLowerCase() ?? '';
@@ -68,19 +68,25 @@ class _BudgetScreenState extends State<BudgetScreen> {
 
   Future<void> _saveBudget(int? id, String category, double amount) async {
     try {
+      final currentDate = DateTime.now();
+      final yearMonth = '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
+
       if (id == null) {
         await DatabaseHelper().addBudget({
-          'category': category,  // Must match the column name
+          'category': category,
           'type': 'expense',
-          'amount': amount,
-          'spent': 0.0,
-          'created_at': DateTime.now().toIso8601String()
+          'budget_limit': amount,
+          'current_month_spent': 0.0,  // Changed from 'spent' to 'current_month_spent'
+          'previous_months_spent': 0.0,
+          'year_month': yearMonth,
+          'created_at': currentDate.toIso8601String(),
+          'is_active': 1
         });
       } else {
         await DatabaseHelper().updateBudget({
           'id': id,
           'category': category,
-          'amount': amount
+          'budget_limit': amount
         });
       }
       await _loadData();
@@ -175,7 +181,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
           itemBuilder: (context, index) {
             final budget = _budgets[index];
             final limit = (budget['budget_limit'] as num).toDouble();
-            final spent = (budget['spent'] as num).toDouble();
+            final spent = (budget['current_month_spent'] as num).toDouble();
             final remaining = limit - spent;
             final percentage = limit > 0 ? (spent / limit) : 0;
 
@@ -195,8 +201,12 @@ class _BudgetScreenState extends State<BudgetScreen> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
+                    Text(
+                      'Period: ${budget['year_month'] ?? ''}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
                     LinearProgressIndicator(
-                      value: (percentage > 1 ? 1 : percentage).toDouble(), // Convert to double
+                      value: (percentage > 1 ? 1 : percentage).toDouble(),
                       backgroundColor: Colors.grey[200],
                       valueColor: AlwaysStoppedAnimation<Color>(
                         percentage > 0.8
@@ -272,9 +282,9 @@ class _BudgetScreenState extends State<BudgetScreen> {
                   border: OutlineInputBorder(),
                 ),
                 items: _categories
-                    .map<DropdownMenuItem<String>>((c) => DropdownMenuItem<String>( // Specify type
-                  value: c['name'] as String, // Cast to String
-                  child: Text(c['name'] as String), // Cast to String
+                    .map<DropdownMenuItem<String>>((c) => DropdownMenuItem<String>(
+                  value: c['name'] as String,
+                  child: Text(c['name'] as String),
                 ))
                     .toList(),
                 onChanged: (value) => selectedCategory = value,
