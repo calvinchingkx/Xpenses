@@ -8,12 +8,20 @@ class AccountScreen extends StatefulWidget {
   const AccountScreen({Key? key}) : super(key: key);
 
   @override
-  _AccountScreenState createState() => _AccountScreenState();
+  State<AccountScreen> createState() => _AccountScreenState();
 }
 
 class _AccountScreenState extends State<AccountScreen> {
   final RefreshController _refreshController = RefreshController();
-  final List<String> _customSortOrder = ['Cash', 'Card', 'E-Wallet', 'Loan'];
+  final List<String> _customSortOrder = [
+    'Cash',
+    'Credit Card',
+    'Debit Card',
+    'E-Wallet',
+    'Fixed Deposit',
+    'Loan',
+    'Other'
+  ];
 
   List<Map<String, dynamic>> _accounts = [];
   bool _isLoading = false;
@@ -34,7 +42,6 @@ class _AccountScreenState extends State<AccountScreen> {
     super.dispose();
   }
 
-  // Optimized: Extracted loading logic
   Future<void> _loadAccounts() async {
     if (_isLoading) return;
 
@@ -43,7 +50,7 @@ class _AccountScreenState extends State<AccountScreen> {
       final accounts = await DatabaseHelper.instance.getAccounts();
       final validatedAccounts = accounts.map((account) => {
         ...account,
-        'balance': account['balance'] ?? 0.0,
+        'balance': (account['balance'] as num?)?.toDouble() ?? 0.0,
       }).toList();
 
       if (mounted) {
@@ -59,16 +66,14 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  // Optimized: Simplified sorting logic
   List<Map<String, dynamic>> _sortAccounts(List<Map<String, dynamic>> accounts) {
     if (_isReorderable) return List.from(accounts);
 
     return List.from(accounts)..sort((a, b) {
-      // Helper functions for cleaner code
       String getValue(String key, Map<String, dynamic> item) =>
           item[key]?.toString().toLowerCase() ?? '';
 
-      num getBalance(Map<String, dynamic> item) =>
+      double getBalance(Map<String, dynamic> item) =>
           (item['balance'] as num?)?.toDouble() ?? 0.0;
 
       switch (_sortBy) {
@@ -94,7 +99,6 @@ class _AccountScreenState extends State<AccountScreen> {
     });
   }
 
-  // Optimized: Extracted refresh logic
   Future<void> _onRefresh() async {
     try {
       await _loadAccounts();
@@ -109,7 +113,6 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  // Optimized: Better error handling for order saving
   Future<void> _saveCustomOrder() async {
     if (_isLoading) return;
 
@@ -131,7 +134,6 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  // Optimized: Cleaner account management
   Future<void> _addOrEditAccount({Map<String, dynamic>? account}) async {
     final newAccount = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -173,7 +175,6 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  // Optimized: Better deletion handling
   Future<void> _deleteAccount(int accountId) async {
     if (_isDeleting) return;
 
@@ -192,7 +193,6 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  // Optimized: More efficient calculation
   double _calculateTotalBalance() {
     return _accounts.fold(0.0, (sum, account) =>
     sum + ((account['balance'] as num?)?.toDouble() ?? 0.0));
@@ -248,7 +248,6 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
-  // Optimized: Extracted widgets for better readability
   Widget _buildSortMenu() {
     return PopupMenuButton<String>(
       onSelected: (value) => setState(() {
@@ -275,7 +274,7 @@ class _AccountScreenState extends State<AccountScreen> {
           value: 'reorder',
           child: Row(
             children: [
-              const SizedBox(width: 26), // Match icon width + padding
+              const SizedBox(width: 26),
               if (_isReorderable) const Icon(Icons.check, size: 18),
               const SizedBox(width: 8),
               const Text('Custom Reorder Mode'),
@@ -293,7 +292,7 @@ class _AccountScreenState extends State<AccountScreen> {
       child: Row(
         children: [
           SizedBox(
-            width: 26, // Fixed width to match icon + padding
+            width: 26,
             child: _sortBy == value
                 ? Icon(
               _sortAscending ? Icons.arrow_upward : Icons.arrow_downward,
@@ -387,7 +386,7 @@ class _AccountScreenState extends State<AccountScreen> {
         final item = _accounts.removeAt(oldIndex);
         _accounts.insert(newIndex, item);
       }),
-      itemBuilder: (context, index) => _buildAccountCard(_accounts[index]),
+      itemBuilder: (context, index) => _buildAccountCard(_accounts[index], index),
     );
   }
 
@@ -396,11 +395,11 @@ class _AccountScreenState extends State<AccountScreen> {
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(bottom: 80),
       itemCount: _accounts.length,
-      itemBuilder: (context, index) => _buildAccountCard(_accounts[index]),
+      itemBuilder: (context, index) => _buildAccountCard(_accounts[index], index),
     );
   }
 
-  Widget _buildAccountCard(Map<String, dynamic> account) {
+  Widget _buildAccountCard(Map<String, dynamic> account, int index) {
     final balance = (account['balance'] as num?)?.toDouble() ?? 0.0;
     final accountName = account['name']?.toString() ?? 'Unnamed Account';
     final accountType = account['accountType']?.toString() ?? 'Unknown Type';
@@ -408,20 +407,16 @@ class _AccountScreenState extends State<AccountScreen> {
     final isProcessing = _isLoading &&
         (_isDeleting || _accounts.indexWhere((a) => a['id'] == account['id']) != -1);
 
-    // Create a GlobalKey for the Dismissible
-    final dismissibleKey = GlobalKey();
-
     return Dismissible(
-      key: dismissibleKey,
+      key: Key('account_${account['id']}'),
       direction: DismissDirection.endToStart,
       confirmDismiss: (direction) async {
-        // Show confirmation dialog when delete button is tapped
         final shouldDelete = await _confirmAccountDeletion();
         if (shouldDelete ?? false) {
-          await _deleteAccount(account['id']);
-          return true; // Allow dismiss animation
+          await _deleteAccount(account['id'] as int);
+          return true;
         }
-        return false; // Don't dismiss
+        return false;
       },
       background: Container(
         margin: const EdgeInsets.symmetric(vertical: 8),
@@ -438,7 +433,7 @@ class _AccountScreenState extends State<AccountScreen> {
             ListTile(
               leading: _isReorderable
                   ? ReorderableDragStartListener(
-                index: _accounts.indexWhere((a) => a['id'] == account['id']),
+                index: index,
                 child: CircleAvatar(
                   backgroundColor: _getAccountColor(accountType),
                   child: const Icon(Icons.drag_handle, color: Colors.white),
@@ -497,18 +492,24 @@ class _AccountScreenState extends State<AccountScreen> {
   Color _getAccountColor(String type) {
     return const {
       'Cash': Colors.blue,
-      'Card': Colors.purple,
+      'Credit Card': Colors.purple,
+      'Debit Card': Colors.indigo,
       'E-Wallet': Colors.orange,
+      'Fixed Deposit': Colors.teal,
       'Loan': Colors.red,
+      'Other': Colors.grey,
     }[type] ?? Colors.grey;
   }
 
   IconData _getAccountIcon(String type) {
     return const {
       'Cash': Icons.attach_money,
-      'Card': Icons.credit_card,
+      'Credit Card': Icons.credit_card,
+      'Debit Card': Icons.payment,
       'E-Wallet': Icons.account_balance_wallet,
+      'Fixed Deposit': Icons.lock_clock,
       'Loan': Icons.money_off,
+      'Other': Icons.account_balance,
     }[type] ?? Icons.account_balance;
   }
 }
@@ -518,7 +519,7 @@ class AccountDialog extends StatefulWidget {
   const AccountDialog({Key? key, this.account}) : super(key: key);
 
   @override
-  _AccountDialogState createState() => _AccountDialogState();
+  State<AccountDialog> createState() => _AccountDialogState();
 }
 
 class _AccountDialogState extends State<AccountDialog> {
@@ -532,9 +533,16 @@ class _AccountDialogState extends State<AccountDialog> {
     super.initState();
     _nameController = TextEditingController(text: widget.account?['name'] ?? '');
     _balanceController = TextEditingController(
-      text: widget.account?['balance']?.toStringAsFixed(2) ?? '0.00',
+      text: (widget.account?['balance'] as num?)?.toStringAsFixed(2) ?? '0.00',
     );
-    _accountType = widget.account?['accountType'] ?? 'Cash';
+    _accountType = widget.account?['accountType']?.toString() ?? 'Cash';
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _balanceController.dispose();
+    super.dispose();
   }
 
   @override
@@ -577,8 +585,15 @@ class _AccountDialogState extends State<AccountDialog> {
                   labelText: 'Account Type',
                   border: OutlineInputBorder(),
                 ),
-                items: ['Cash', 'Card', 'E-Wallet', 'Loan']
-                    .map((type) => DropdownMenuItem(
+                items: [
+                  'Cash',
+                  'Credit Card',
+                  'Debit Card',
+                  'E-Wallet',
+                  'Fixed Deposit',
+                  'Loan',
+                  'Other'
+                ].map((type) => DropdownMenuItem(
                   value: type,
                   child: Text(type),
                 ))

@@ -177,19 +177,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
       barrierColor: Colors.black54,
       isDismissible: true,
       builder: (BuildContext context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.75,
-          minChildSize: 0.75,
-          maxChildSize: 0.75,
-          builder: (BuildContext context, ScrollController scrollController) {
-            return Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-              ),
-              child: child,
-            );
+        return GestureDetector(
+            onTap: () {
+            Navigator.pop(context); // Dismiss when tapping outside
           },
+          behavior: HitTestBehavior.opaque, // Makes entire area tappable
+          child: DraggableScrollableSheet(
+            initialChildSize: 0.75,
+            minChildSize: 0.75,
+            maxChildSize: 0.75,
+            builder: (BuildContext context, ScrollController scrollController) {
+              return Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+                ),
+                child: child,
+              );
+            },
+          )
         );
       },
     ).then((_) => onDismiss?.call());
