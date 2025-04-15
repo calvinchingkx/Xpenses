@@ -22,7 +22,6 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _noteController;
   late final TextEditingController _amountController;
-  late final TextEditingController _dateController;
   late DateTime selectedDate;
   late String selectedTransactionType;
   String? selectedAccount;
@@ -37,23 +36,22 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
   @override
   void initState() {
     super.initState();
-    _initializeControllers();
+    _initializeData();
     _fetchDatabaseData();
   }
 
-  void _initializeControllers() {
-    _noteController = TextEditingController(text: widget.transaction['note'] ?? '');
+  void _initializeData() {
     _amountController = TextEditingController(
-        text: (widget.transaction['amount'] as num?)?.toStringAsFixed(2) ?? ''
+      text: (widget.transaction['amount'] as num?)?.toStringAsFixed(2) ?? '',
     );
+    _noteController = TextEditingController(text: widget.transaction['note'] ?? '');
 
     selectedTransactionType = widget.transaction['type'] ?? 'Expense';
 
-    // Handle transfer case specifically
     if (selectedTransactionType == 'Transfer') {
       selectedAccount = widget.transaction['account'] ?? '';
       selectedToAccount = widget.transaction['to_account'] ?? '';
-      selectedCategory = selectedToAccount; // Use to_account as the category for transfers
+      selectedCategory = selectedToAccount;
     } else {
       selectedAccount = widget.transaction['account'] ?? '';
       selectedCategory = widget.transaction['category'] ?? '';
@@ -65,8 +63,6 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
     selectedDate = transactionDate != null && transactionDate.isNotEmpty
         ? _parseDate(transactionDate)
         : DateTime.now();
-
-    _dateController = TextEditingController(text: _formatDate(selectedDate));
   }
 
   DateTime _parseDate(String dateString) {
@@ -81,7 +77,6 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
   void dispose() {
     _noteController.dispose();
     _amountController.dispose();
-    _dateController.dispose();
     super.dispose();
   }
 
@@ -107,17 +102,14 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
         final currentFromAccount = selectedAccount;
 
         setState(() {
-          // Filter out the current "From Account" from the "To Account" options
           categories = allAccounts
               .map((a) => a['name'] as String)
               .where((account) => account != currentFromAccount)
               .toList();
 
-          // Preserve the original "To Account" if it's still valid
           if (selectedToAccount != null && categories.contains(selectedToAccount)) {
             selectedCategory = selectedToAccount;
           } else if (categories.isNotEmpty) {
-            // Select first available account if original is no longer valid
             selectedCategory = categories.first;
           } else {
             selectedCategory = null;
@@ -131,7 +123,6 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
 
         setState(() {
           categories = categoryList.map((c) => c['name'] as String).toList();
-          // Try to preserve original category if possible
           if (widget.transaction['category'] != null &&
               categories.contains(widget.transaction['category'])) {
             selectedCategory = widget.transaction['category'];
@@ -189,13 +180,8 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
     if (pickedDate != null && pickedDate != selectedDate) {
       setState(() {
         selectedDate = pickedDate;
-        _dateController.text = _formatDate(pickedDate);
       });
     }
-  }
-
-  String _formatDate(DateTime date) {
-    return DateFormat('dd/MM/yyyy (EEE)').format(date);
   }
 
   String _formatDateForStorage(DateTime date) {
@@ -207,47 +193,53 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
 
     final refreshNotifier = Provider.of<AppRefreshNotifier>(context, listen: false);
 
-    if (selectedTransactionType == 'Transfer') {
-      await _handleTransfer(refreshNotifier);
-      return;
-    }
-
     try {
-      final accountId = await DatabaseHelper.instance.getAccountIdByName(selectedAccount!);
-      final amount = double.parse(_amountController.text);
+      if (selectedTransactionType == 'Transfer') {
+        // Handle transfer case
+        if (selectedAccount == null || selectedCategory == null) {
+          _showError('Please select both From and To accounts');
+          return;
+        }
 
-      final transaction = {
-        'id': widget.transaction['id'],
-        'type': selectedTransactionType,
-        'date': _formatDateForStorage(selectedDate),
-        'account_id': accountId,
-        'category': selectedCategory ?? '',
-        'subcategory': selectedSubcategory ?? '',
-        'amount': amount,
-        'note': _noteController.text,
-      };
+        if (selectedAccount == selectedCategory) {
+          _showError('Cannot transfer to the same account');
+          return;
+        }
 
-      final original = await DatabaseHelper.instance.getTransactionById(widget.transaction['id']);
-      if (original == null) {
-        _showError('Original transaction not found');
-        return;
+        final fromAccountId = await DatabaseHelper.instance.getAccountIdByName(selectedAccount!);
+        final toAccountId = await DatabaseHelper.instance.getAccountIdByName(selectedCategory!);
+
+        await DatabaseHelper.instance.updateTransactionType(
+          widget.transaction['id'],
+          'Transfer',
+          fromAccountId: fromAccountId,
+          toAccountId: toAccountId,
+          category: selectedCategory,
+        );
+      } else {
+        // Handle income/expense case
+        final accountId = await DatabaseHelper.instance.getAccountIdByName(selectedAccount!);
+
+        await DatabaseHelper.instance.updateTransactionType(
+          widget.transaction['id'],
+          selectedTransactionType,
+          fromAccountId: accountId,
+          category: selectedCategory,
+        );
       }
 
-      await _adjustAccountBalance(
-          original['account_id'],
-          original['amount'],
-          original['type'],
-          reverse: true
-      );
-
-      await DatabaseHelper.instance.deleteTransaction(widget.transaction['id']);
-
-      await DatabaseHelper.instance.insertTransaction(transaction);
-
-      await _adjustAccountBalance(
-          accountId,
-          amount,
-          selectedTransactionType
+      // Update other transaction details
+      final db = await DatabaseHelper.instance.database;
+      await db.update(
+        'transactions',
+        {
+          'date': _formatDateForStorage(selectedDate),
+          'subcategory': selectedSubcategory ?? '',
+          'amount': double.parse(_amountController.text),
+          'note': _noteController.text,
+        },
+        where: 'id = ?',
+        whereArgs: [widget.transaction['id']],
       );
 
       refreshNotifier.refreshAccounts();
@@ -255,84 +247,6 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
       Navigator.pop(context, true);
     } catch (e) {
       _showError('Failed to update transaction: ${e.toString()}');
-    }
-  }
-
-  Future<void> _handleTransfer(AppRefreshNotifier refreshNotifier) async {
-    if (selectedAccount == null || selectedCategory == null) {
-      _showError('Please select both From and To accounts');
-      return;
-    }
-
-    if (selectedAccount == selectedCategory) {
-      _showError('Cannot transfer to the same account');
-      return;
-    }
-
-    try {
-      final fromAccountId = await DatabaseHelper.instance.getAccountIdByName(selectedAccount!);
-      final toAccountId = await DatabaseHelper.instance.getAccountIdByName(selectedCategory!);
-      final amount = double.parse(_amountController.text);
-
-      final transfer = {
-        'id': widget.transaction['id'],
-        'type': 'Transfer',
-        'date': _formatDateForStorage(selectedDate),
-        'from_account_id': fromAccountId,
-        'to_account_id': toAccountId,
-        'amount': amount,
-        'note': _noteController.text,
-      };
-
-      final original = await DatabaseHelper.instance.getTransactionById(widget.transaction['id']);
-      if (original == null) {
-        _showError('Original transaction not found');
-        return;
-      }
-
-      await _revertTransfer(original);
-
-      await DatabaseHelper.instance.deleteTransaction(widget.transaction['id']);
-
-      final db = await DatabaseHelper.instance.database;
-      await db.transaction((txn) async {
-        await txn.insert('transactions', transfer);
-
-        final fromAccount = await txn.query(
-          'accounts',
-          where: 'id = ?',
-          whereArgs: [fromAccountId],
-        );
-
-        final toAccount = await txn.query(
-          'accounts',
-          where: 'id = ?',
-          whereArgs: [toAccountId],
-        );
-
-        final newFromBalance = (fromAccount.first['balance'] as num).toDouble() - amount;
-        final newToBalance = (toAccount.first['balance'] as num).toDouble() + amount;
-
-        await txn.update(
-          'accounts',
-          {'balance': newFromBalance},
-          where: 'id = ?',
-          whereArgs: [fromAccountId],
-        );
-
-        await txn.update(
-          'accounts',
-          {'balance': newToBalance},
-          where: 'id = ?',
-          whereArgs: [toAccountId],
-        );
-      });
-
-      refreshNotifier.refreshAccounts();
-      refreshNotifier.refreshTransactions();
-      Navigator.pop(context, true);
-    } catch (e) {
-      _showError('Failed to process transfer: ${e.toString()}');
     }
   }
 
@@ -439,16 +353,11 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
     }
   }
 
-  void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.red),
-    );
-  }
-
   Widget _buildTypeSelector(String type, Color activeColor) {
+    final isSelected = selectedTransactionType == type;
     return GestureDetector(
       onTap: () async {
-        if (selectedTransactionType != type) {
+        if (!isSelected) {
           setState(() {
             selectedTransactionType = type;
             selectedCategory = null;
@@ -460,18 +369,19 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
+          color: isSelected ? activeColor.withOpacity(0.2) : Colors.transparent,
           border: Border.all(
-            color: selectedTransactionType == type ? activeColor : Colors.grey,
+            color: isSelected ? activeColor : Colors.grey,
             width: 2,
           ),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
           type,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.bold,
-            color: Colors.black,
+            color: isSelected ? activeColor : Colors.black,
           ),
         ),
       ),
@@ -501,14 +411,11 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
       )).toList(),
       onChanged: (newValue) {
         if (isTransfer && label == 'Account' && newValue == selectedCategory) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Cannot transfer to the same account')),
-          );
+          _showError('Cannot transfer to the same account');
           return;
         }
         onChanged(newValue);
         if (label == 'Account' && isTransfer) {
-          // When From Account changes, update To Account options
           _fetchCategoriesAndSubcategories();
         } else if (label == 'Category' && !isTransfer && newValue != null) {
           _fetchSubcategories();
@@ -518,127 +425,208 @@ class _TransactionDetailPageState extends State<TransactionDetailPage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            controller: widget.scrollController,
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _buildTypeSelector("Income", Colors.blue),
-                    _buildTypeSelector("Expense", Colors.red),
-                    _buildTypeSelector("Transfer", Colors.blueGrey),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                GestureDetector(
-                  onTap: () => _selectDate(context),
-                  child: AbsorbPointer(
-                    child: TextFormField(
-                      decoration: const InputDecoration(
-                        labelText: "Date",
-                        border: OutlineInputBorder(),
-                      ),
-                      controller: _dateController,
-                      validator: (value) => value?.isEmpty ?? true ? 'Please select date' : null,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                _buildDropdown(
-                  selectedTransactionType == 'Transfer' ? 'From Account' : 'Account',
-                  accountTypes,
-                  selectedAccount,
-                      (value) {
-                    setState(() => selectedAccount = value);
-                    if (selectedTransactionType == 'Transfer') {
-                      _fetchCategoriesAndSubcategories();
-                    }
-                  },
-                ),
-                const SizedBox(height: 20),
-                _buildDropdown(
-                  selectedTransactionType == 'Transfer' ? 'To Account' : 'Category',
-                  categories,
-                  selectedCategory,
-                      (value) => setState(() => selectedCategory = value),
-                ),
-                if (subcategories.isNotEmpty && selectedTransactionType != 'Transfer') ...[
-                  const SizedBox(height: 20),
-                  _buildDropdown(
-                    "Subcategory",
-                    subcategories,
-                    selectedSubcategory,
-                        (value) => setState(() => selectedSubcategory = value),
-                  ),
-                ],
-                const SizedBox(height: 20),
-                TextFormField(
-                  controller: _amountController,
-                  keyboardType: TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: "Amount",
-                    border: OutlineInputBorder(),
-                    prefixText: '\$ ',
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) return 'Please enter amount';
-                    if (double.tryParse(value) == null) return 'Invalid amount';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 20),
-                TextFormField(
-                  controller: _noteController,
-                  decoration: const InputDecoration(
-                    labelText: "Note",
-                    border: OutlineInputBorder(),
-                  ),
-                  maxLines: 2,
-                ),
-                const SizedBox(height: 30),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                        ),
-                        onPressed: _deleteTransaction,
-                        child: const Text(
-                          "DELETE",
-                          style: TextStyle(color: Colors.red),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                        ),
-                        onPressed: _updateTransaction,
-                        child: const Text("SAVE"),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+  Widget _buildDateField() {
+    return GestureDetector(
+      onTap: () => _selectDate(context),
+      child: AbsorbPointer(
+        child: TextFormField(
+          decoration: const InputDecoration(
+            labelText: "Date",
+            border: OutlineInputBorder(),
+            suffixIcon: Icon(Icons.calendar_today),
           ),
+          controller: TextEditingController(
+            text: DateFormat('dd/MM/yyyy (EEE)').format(selectedDate),
+          ),
+          validator: (value) => value?.isEmpty ?? true ? 'Required' : null,
         ),
       ),
+    );
+  }
+
+  Widget _buildAmountField() {
+    return TextFormField(
+      controller: _amountController,
+      keyboardType: TextInputType.numberWithOptions(decimal: true),
+      decoration: const InputDecoration(
+        labelText: "Amount",
+        border: OutlineInputBorder(),
+        prefixText: '\$ ',
+      ),
+      validator: (value) {
+        if (value == null || value.isEmpty) return 'Required';
+        if (double.tryParse(value) == null) return 'Invalid amount';
+        if (double.parse(value) <= 0) return 'Must be positive';
+        return null;
+      },
+    );
+  }
+
+  Widget _buildNoteField() {
+    return TextFormField(
+      controller: _noteController,
+      decoration: const InputDecoration(
+        labelText: "Note",
+        border: OutlineInputBorder(),
+      ),
+      maxLines: 1,
+      textInputAction: TextInputAction.done,
+    );
+  }
+
+  Widget _buildActionButtons() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                side: const BorderSide(color: Colors.red),
+              ),
+              onPressed: _deleteTransaction,
+              child: const Text(
+                "DELETE",
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              onPressed: _updateTransaction,
+              child: const Text("SAVE"),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
+        final shouldPop = await _confirmDiscardChanges();
+        if (shouldPop && mounted) Navigator.pop(context);
+      },
+      child: Stack(
+        children: [
+          SingleChildScrollView(
+            controller: widget.scrollController,
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Transaction Type Selector
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _buildTypeSelector("Income", Colors.blue),
+                        _buildTypeSelector("Expense", Colors.red),
+                        _buildTypeSelector("Transfer", Colors.blueGrey),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Date Picker
+                  _buildDateField(),
+                  const SizedBox(height: 20),
+
+                  // Account Dropdown
+                  _buildDropdown(
+                    selectedTransactionType == 'Transfer' ? 'From Account' : 'Account',
+                    accountTypes,
+                    selectedAccount,
+                        (value) {
+                      setState(() => selectedAccount = value);
+                      if (selectedTransactionType == 'Transfer') {
+                        _fetchCategoriesAndSubcategories();
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Category/To Account Dropdown
+                  _buildDropdown(
+                    selectedTransactionType == 'Transfer' ? 'To Account' : 'Category',
+                    categories,
+                    selectedCategory,
+                        (value) => setState(() => selectedCategory = value),
+                  ),
+
+                  // Subcategory Dropdown (only when available)
+                  if (subcategories.isNotEmpty && selectedTransactionType != 'Transfer')
+                    Column(
+                      children: [
+                        const SizedBox(height: 20),
+                        _buildDropdown(
+                          "Subcategory",
+                          subcategories,
+                          selectedSubcategory,
+                              (value) => setState(() => selectedSubcategory = value),
+                        ),
+                      ],
+                    ),
+
+                  // Amount Field
+                  const SizedBox(height: 20),
+                  _buildAmountField(),
+
+                  // Note Field
+                  const SizedBox(height: 20),
+                  _buildNoteField(),
+
+                  // Action Buttons
+                  _buildActionButtons(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _confirmDiscardChanges() async {
+    if (_amountController.text == (widget.transaction['amount'] as num?)?.toStringAsFixed(2) &&
+        _noteController.text == (widget.transaction['note'] ?? '')) {
+      return true;
+    }
+
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Discard changes?'),
+        content: const Text('You have unsaved changes. Are you sure?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    ) ?? false;
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
     );
   }
 }

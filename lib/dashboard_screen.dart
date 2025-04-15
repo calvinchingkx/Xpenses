@@ -4,7 +4,7 @@ import 'package:pull_to_refresh/pull_to_refresh.dart';
 import 'package:provider/provider.dart';
 import 'database_helper.dart';
 import 'transaction_add.dart';
-import 'transaction_detail.dart';
+import 'transaction_update.dart';
 import 'app_refresh_notifier.dart';
 
 class DashboardScreen extends StatefulWidget {

@@ -428,6 +428,114 @@ class DatabaseHelper {
     }
   }
 
+  Future<int> updateTransactionType(int transactionId, String newType,
+      {int? fromAccountId, int? toAccountId, String? category}) async {
+    final db = await database;
+    return await db.transaction((txn) async {
+      // Get the original transaction
+      final transaction = await txn.query(
+        'transactions',
+        where: 'id = ?',
+        whereArgs: [transactionId],
+      );
+
+      if (transaction.isEmpty) return 0;
+      final original = transaction.first;
+      final amount = (original['amount'] as num).toDouble();
+
+      // First reverse the original transaction's effect
+      switch (original['type'] as String) {
+        case 'Income':
+          if (original['account_id'] != null) {
+            await _updateAccountBalance(
+              txn,
+              original['account_id'] as int,
+              -amount,
+            );
+          }
+          break;
+        case 'Expense':
+          if (original['account_id'] != null) {
+            await _updateAccountBalance(
+              txn,
+              original['account_id'] as int,
+              amount,
+            );
+          }
+          break;
+        case 'Transfer':
+          if (original['from_account_id'] != null &&
+              original['to_account_id'] != null) {
+            // Return to source account
+            await _updateAccountBalance(
+              txn,
+              original['from_account_id'] as int,
+              amount,
+            );
+            // Deduct from destination account
+            await _updateAccountBalance(
+              txn,
+              original['to_account_id'] as int,
+              -amount,
+            );
+          }
+          break;
+      }
+
+      // Apply the new transaction type
+      switch (newType) {
+        case 'Income':
+          if (fromAccountId != null) {
+            await _updateAccountBalance(
+              txn,
+              fromAccountId,
+              amount,
+            );
+          }
+          break;
+        case 'Expense':
+          if (fromAccountId != null) {
+            await _updateAccountBalance(
+              txn,
+              fromAccountId,
+              -amount,
+            );
+          }
+          break;
+        case 'Transfer':
+          if (fromAccountId != null && toAccountId != null) {
+            // Deduct from source account
+            await _updateAccountBalance(
+              txn,
+              fromAccountId,
+              -amount,
+            );
+            // Add to destination account
+            await _updateAccountBalance(
+              txn,
+              toAccountId,
+              amount,
+            );
+          }
+          break;
+      }
+
+      // Update the transaction record
+      return await txn.update(
+        'transactions',
+        {
+          'type': newType,
+          'account_id': newType == 'Transfer' ? null : fromAccountId,
+          'from_account_id': newType == 'Transfer' ? fromAccountId : null,
+          'to_account_id': newType == 'Transfer' ? toAccountId : null,
+          'category': category,
+        },
+        where: 'id = ?',
+        whereArgs: [transactionId],
+      );
+    });
+  }
+
   Future<int> deleteTransaction(int transactionId) async {
     final db = await database;
     try {

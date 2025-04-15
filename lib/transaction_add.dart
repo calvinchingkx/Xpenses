@@ -248,7 +248,7 @@ class _TransactionPageState extends State<TransactionPage> {
         children: [
           SingleChildScrollView(
             controller: widget.scrollController,
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 100), // Extra bottom padding for button
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
             child: Form(
               key: _formKey,
               child: Column(
@@ -276,17 +276,29 @@ class _TransactionPageState extends State<TransactionPage> {
                         decoration: const InputDecoration(
                           labelText: "Date",
                           border: OutlineInputBorder(),
+                          suffixIcon: Icon(Icons.calendar_today),
                         ),
-                        controller: TextEditingController(text: _formatDate(selectedDate)),
+                        controller: TextEditingController(
+                          text: DateFormat('dd/MM/yyyy (EEE)').format(selectedDate),
+                        ),
+                        validator: (value) => value?.isEmpty ?? true ? 'Required' : null,
                       ),
                     ),
                   ),
                   const SizedBox(height: 20),
 
                   // Account Dropdown
-                  _buildDropdown("Account", accountTypes, selectedAccount, (value) {
-                    setState(() => selectedAccount = value);
-                  }),
+                  _buildDropdown(
+                    selectedTransactionType == 'Transfer' ? 'From Account' : 'Account',
+                    accountTypes,
+                    selectedAccount,
+                        (value) {
+                      setState(() => selectedAccount = value);
+                      if (selectedTransactionType == 'Transfer') {
+                        _loadCategories('transfer');
+                      }
+                    },
+                  ),
                   const SizedBox(height: 20),
 
                   // Category/To Account Dropdown
@@ -294,18 +306,11 @@ class _TransactionPageState extends State<TransactionPage> {
                     selectedTransactionType == 'Transfer' ? 'To Account' : 'Category',
                     categories,
                     selectedCategory,
-                        (value) {
-                      setState(() {
-                        selectedCategory = value;
-                        if (value != null && selectedTransactionType != 'Transfer') {
-                          _loadSubcategories(value);
-                        }
-                      });
-                    },
+                        (value) => setState(() => selectedCategory = value),
                   ),
 
                   // Subcategory Dropdown (only when available)
-                  if (subcategories.isNotEmpty)
+                  if (subcategories.isNotEmpty && selectedTransactionType != 'Transfer')
                     Column(
                       children: [
                         const SizedBox(height: 20),
@@ -336,7 +341,7 @@ class _TransactionPageState extends State<TransactionPage> {
                     },
                   ),
 
-                  // Note Field (single line)
+                  // Note Field
                   const SizedBox(height: 20),
                   TextFormField(
                     controller: noteController,
@@ -344,10 +349,12 @@ class _TransactionPageState extends State<TransactionPage> {
                       labelText: "Note",
                       border: OutlineInputBorder(),
                     ),
-                    maxLines: 1, // Single line only
-                    textInputAction: TextInputAction.done, // Show "Done" button
-                    keyboardType: TextInputType.text,
+                    maxLines: 1,
+                    textInputAction: TextInputAction.done,
                   ),
+
+                  // Add extra space at the bottom for the fixed buttons
+                  const SizedBox(height: 60),
                 ],
               ),
             ),
@@ -355,7 +362,7 @@ class _TransactionPageState extends State<TransactionPage> {
 
           // Fixed Save Button at Bottom
           Positioned(
-            bottom: 40,
+            bottom: 20,
             left: 20,
             right: 20,
             child: ElevatedButton(
