@@ -10,6 +10,11 @@ class ReportScreen extends StatefulWidget {
 
 class _ReportScreenState extends State<ReportScreen> {
   DateTime _selectedMonth = DateTime.now();
+  int _currentPieChartTab = 0; // 0=Overview, 1=Income, 2=Expenses
+  String? _selectedCategory;
+  bool _showCategoryDetails = false;
+  String? _selectedCategoryType; // 'income' or 'expense'
+  Map<String, double> _categoryDetails = {};
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +39,9 @@ class _ReportScreenState extends State<ReportScreen> {
         final expensesByCategory = reportData['expensesByCategory'] ?? {};
         final incomeByCategory = reportData['incomeByCategory'] ?? {};
         final monthlyTrends = reportData['monthlyTrends'] ?? {};
+        final savingsTrends = reportData['savingsTrends'] ?? {};
         final transactions = reportData['transactions'] ?? [];
+        final subcategories = reportData['subcategories'] ?? {};
 
         return Scaffold(
           appBar: AppBar(
@@ -53,41 +60,247 @@ class _ReportScreenState extends State<ReportScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Month selector and summary
-                  _buildMonthSelector(context),
+                  // Month selector
+                  Text(
+                    DateFormat('MMMM y').format(_selectedMonth),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
                   SizedBox(height: 20),
 
                   // Summary cards
-                  _buildSummaryCards(totalIncome, totalExpenses, savings),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildSummaryCard(
+                          title: 'Income',
+                          amount: totalIncome,
+                          color: Colors.green,
+                          icon: Icons.arrow_upward,
+                        ),
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: _buildSummaryCard(
+                          title: 'Expense',
+                          amount: totalExpenses,
+                          color: Colors.red,
+                          icon: Icons.arrow_downward,
+                        ),
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: _buildSummaryCard(
+                          title: 'Savings',
+                          amount: savings,
+                          color: savings >= 0 ? Colors.blue : Colors.orange,
+                          icon: savings >= 0 ? Icons.savings : Icons.warning,
+                        ),
+                      ),
+                    ],
+                  ),
                   SizedBox(height: 20),
 
-                  // Income vs Expenses Pie Chart
-                  if (totalIncome > 0 || totalExpenses > 0)
-                    _buildIncomeExpensePieChart(totalIncome, totalExpenses),
-                  SizedBox(height: 20),
+                  // Pie Chart with tabs
+                  Card(
+                    elevation: 3,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16.0),
+                      child: Column(
+                        children: [
+                          DefaultTabController(
+                            length: 3,
+                            initialIndex: _currentPieChartTab,
+                            child: Column(
+                              children: [
+                                TabBar(
+                                  onTap: (index) {
+                                    setState(() {
+                                      _currentPieChartTab = index;
+                                      _showCategoryDetails = false;
+                                    });
+                                  },
+                                  tabs: [
+                                    Tab(text: 'Overview'),
+                                    Tab(text: 'Income'),
+                                    Tab(text: 'Expenses'),
+                                  ],
+                                ),
+                                SizedBox(height: 16),
+                                SizedBox(
+                                  height: 300,
+                                  child: TabBarView(
+                                    children: [
+                                      // Overview Tab
+                                      Column(
+                                        children: [
+                                          Expanded(
+                                            child: GestureDetector(
+                                              onTapDown: (details) {
+                                                final touchedSection = _getTouchedPieSection(
+                                                  details.localPosition,
+                                                  totalIncome,
+                                                  totalExpenses,
+                                                );
+                                                if (touchedSection == 0) {
+                                                  setState(() {
+                                                    _currentPieChartTab = 1;
+                                                  });
+                                                } else if (touchedSection == 1) {
+                                                  setState(() {
+                                                    _currentPieChartTab = 2;
+                                                  });
+                                                }
+                                              },
+                                              child: _buildIncomeExpensePieChart(totalIncome, totalExpenses),
+                                            ),
+                                          ),
+                                          SizedBox(height: 10),
+                                          Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              _buildLegendItem(Colors.green, 'Income'),
+                                              SizedBox(width: 20),
+                                              _buildLegendItem(Colors.red, 'Expenses'),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
 
-                  // Expenses by Category
-                  if (expensesByCategory.isNotEmpty)
-                    _buildCategoryChart(
-                      title: 'Expenses by Category',
-                      data: expensesByCategory,
-                      isIncome: false,
+                                      // Income Tab
+                                      incomeByCategory.isEmpty
+                                          ? Center(child: Text('No income data'))
+                                          : Column(
+                                        children: [
+                                          Expanded(
+                                            child: _buildCategoryPieChart(
+                                              incomeByCategory,
+                                              isIncome: true,
+                                              onCategoryTap: (category) {
+                                                setState(() {
+                                                  _selectedCategory = category;
+                                                  _selectedCategoryType = 'income';
+                                                  _showCategoryDetails = true;
+                                                  _categoryDetails = _aggregateSubcategories(
+                                                    subcategories[category] ?? [],
+                                                  );
+                                                });
+                                              },
+                                            ),
+                                          ),
+                                          SizedBox(height: 10),
+                                          Text(
+                                            'Tap on a category to see details',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+
+                                      // Expenses Tab
+                                      expensesByCategory.isEmpty
+                                          ? Center(child: Text('No expense data'))
+                                          : Column(
+                                        children: [
+                                          Expanded(
+                                            child: _buildCategoryPieChart(
+                                              expensesByCategory,
+                                              isIncome: false,
+                                              onCategoryTap: (category) {
+                                                setState(() {
+                                                  _selectedCategory = category;
+                                                  _selectedCategoryType = 'expense';
+                                                  _showCategoryDetails = true;
+                                                  _categoryDetails = _aggregateSubcategories(
+                                                    subcategories[category] ?? [],
+                                                  );
+                                                });
+                                              },
+                                            ),
+                                          ),
+                                          SizedBox(height: 10),
+                                          Text(
+                                            'Tap on a category to see details',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
+                  ),
                   SizedBox(height: 20),
+
+                  // Category details if selected
+                  if (_showCategoryDetails && _selectedCategory != null)
+                    _buildCategoryDetailsView(),
 
                   // Income by Category
-                  if (incomeByCategory.isNotEmpty)
-                    _buildCategoryChart(
+                  if (!_showCategoryDetails && incomeByCategory.isNotEmpty)
+                    _buildCategoryBarChart(
                       title: 'Income by Category',
                       data: incomeByCategory,
                       isIncome: true,
+                      subcategories: subcategories,
+                      onCategoryTap: (category) {
+                        setState(() {
+                          _selectedCategory = category;
+                          _selectedCategoryType = 'income';
+                          _showCategoryDetails = true;
+                          _categoryDetails = _aggregateSubcategories(
+                            subcategories[category] ?? [],
+                          );
+                        });
+                      },
                     ),
-                  SizedBox(height: 20),
+
+                  // Expenses by Category
+                  if (!_showCategoryDetails && expensesByCategory.isNotEmpty)
+                    _buildCategoryBarChart(
+                      title: 'Expenses by Category',
+                      data: expensesByCategory,
+                      isIncome: false,
+                      subcategories: subcategories,
+                      onCategoryTap: (category) {
+                        setState(() {
+                          _selectedCategory = category;
+                          _selectedCategoryType = 'expense';
+                          _showCategoryDetails = true;
+                          _categoryDetails = _aggregateSubcategories(
+                            subcategories[category] ?? [],
+                          );
+                        });
+                      },
+                    ),
 
                   // Monthly Trends
                   if (monthlyTrends.isNotEmpty)
-                    _buildTrendChart(monthlyTrends),
-                  SizedBox(height: 20),
+                    _buildTrendChart(
+                      monthlyTrends,
+                      title: 'Monthly Income & Expenses',
+                      showLabels: true,
+                      showHorizontalAxis: true,
+                    ),
+
+                  // Savings Trends
+                  if (savingsTrends.isNotEmpty)
+                    _buildTrendChart(
+                      savingsTrends,
+                      title: 'Monthly Savings',
+                      isSavings: true,
+                      showLabels: true,
+                      showHorizontalAxis: true,
+                    ),
 
                   // Recent Transactions
                   if (transactions.isNotEmpty)
@@ -101,128 +314,61 @@ class _ReportScreenState extends State<ReportScreen> {
     );
   }
 
-  Future<Map<String, dynamic>> _fetchReportData(int month, int year) async {
-    final db = DatabaseHelper();
-
-    // Get totals for the selected month
-    final totalIncome = await db.getTotalByTypeForMonth('Income', month, year) ?? 0.0;
-    final totalExpenses = await db.getTotalByTypeForMonth('Expense', month, year) ?? 0.0;
-
-    // Get transactions for the selected month
-    final transactions = await db.getTransactionsForMonth(month, year);
-
-    // Calculate expenses by category
-    final expensesByCategory = <String, double>{};
-    final incomeByCategory = <String, double>{};
-
-    for (final t in transactions) {
-      if (t['type'] == 'Expense' && t['category'] != null) {
-        final category = t['category'] as String;
-        final amount = (t['amount'] as num).toDouble();
-        expensesByCategory[category] = (expensesByCategory[category] ?? 0) + amount;
-      } else if (t['type'] == 'Income' && t['category'] != null) {
-        final category = t['category'] as String;
-        final amount = (t['amount'] as num).toDouble();
-        incomeByCategory[category] = (incomeByCategory[category] ?? 0) + amount;
-      }
+  Map<String, double> _aggregateSubcategories(List<Map<String, dynamic>> subcategories) {
+    final result = <String, double>{};
+    for (final subcat in subcategories) {
+      final name = subcat['name'] as String;
+      final amount = (subcat['amount'] as num).toDouble();
+      result[name] = (result[name] ?? 0) + amount;
     }
-
-    // Get monthly trends (last 6 months)
-    final monthlyTrends = await _getMonthlyTrends();
-
-    return {
-      'totalIncome': totalIncome,
-      'totalExpenses': totalExpenses,
-      'expensesByCategory': expensesByCategory,
-      'incomeByCategory': incomeByCategory,
-      'monthlyTrends': monthlyTrends,
-      'transactions': transactions,
-    };
-  }
-
-  Future<Map<String, Map<String, double>>> _getMonthlyTrends() async {
-    final db = DatabaseHelper();
-    final now = DateTime.now();
-    final result = <String, Map<String, double>>{};
-
-    for (int i = 5; i >= 0; i--) {
-      final month = DateTime(now.year, now.month - i, 1);
-      final monthKey = DateFormat('MMM y').format(month);
-
-      final income = await db.getTotalByTypeForMonth('Income', month.month, month.year) ?? 0.0;
-      final expense = await db.getTotalByTypeForMonth('Expense', month.month, month.year) ?? 0.0;
-
-      result[monthKey] = {
-        'income': income,
-        'expense': expense,
-      };
-    }
-
     return result;
   }
 
-  Widget _buildMonthSelector(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          DateFormat('MMMM y').format(_selectedMonth),
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+  Widget _buildCategoryDetailsView() {
+    return Card(
+      elevation: 3,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  icon: Icon(Icons.arrow_back),
+                  onPressed: () {
+                    setState(() {
+                      _showCategoryDetails = false;
+                    });
+                  },
+                ),
+                Text(
+                  '$_selectedCategory Details',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            SizedBox(height: 10),
+            if (_categoryDetails.isEmpty)
+              Center(child: Text('No details available')),
+            if (_categoryDetails.isNotEmpty)
+              Column(
+                children: _categoryDetails.entries.map((entry) {
+                  return ListTile(
+                    title: Text(entry.key),
+                    trailing: Text(
+                      '\$${entry.value.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        color: _selectedCategoryType == 'income' ? Colors.green : Colors.red,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+          ],
         ),
-        IconButton(
-          icon: Icon(Icons.filter_list),
-          onPressed: () => _selectMonth(context),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _selectMonth(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedMonth,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
-      initialDatePickerMode: DatePickerMode.year,
-    );
-
-    if (picked != null && picked != _selectedMonth) {
-      setState(() {
-        _selectedMonth = picked;
-      });
-    }
-  }
-
-  Widget _buildSummaryCards(double income, double expense, double savings) {
-    return Row(
-      children: [
-        Expanded(
-          child: _buildSummaryCard(
-            title: 'Income',
-            amount: income,
-            color: Colors.green,
-            icon: Icons.arrow_upward,
-          ),
-        ),
-        SizedBox(width: 10),
-        Expanded(
-          child: _buildSummaryCard(
-            title: 'Expense',
-            amount: expense,
-            color: Colors.red,
-            icon: Icons.arrow_downward,
-          ),
-        ),
-        SizedBox(width: 10),
-        Expanded(
-          child: _buildSummaryCard(
-            title: 'Savings',
-            amount: savings,
-            color: savings >= 0 ? Colors.blue : Colors.orange,
-            icon: savings >= 0 ? Icons.savings : Icons.warning,
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -268,71 +414,93 @@ class _ReportScreenState extends State<ReportScreen> {
     );
   }
 
+  int _getTouchedPieSection(Offset position, double income, double expense) {
+    final total = income + expense;
+    final angle = (position.dx / 200) * 360;
+    if (angle < (income / total) * 360) {
+      return 0; // Income section
+    } else {
+      return 1; // Expense section
+    }
+  }
+
   Widget _buildIncomeExpensePieChart(double income, double expense) {
-    return Card(
-      elevation: 3,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Income vs Expenses',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+    return PieChart(
+      PieChartData(
+        sections: [
+          PieChartSectionData(
+            color: Colors.green,
+            value: income,
+            title: '\$${income.toStringAsFixed(0)}',
+            radius: 60,
+            titleStyle: TextStyle(
+              fontSize: 12,
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
             ),
-            SizedBox(height: 10),
-            SizedBox(
-              height: 200,
-              child: PieChart(
-                PieChartData(
-                  sections: [
-                    PieChartSectionData(
-                      color: Colors.green,
-                      value: income,
-                      title: '${(income / (income + expense) * 100).toStringAsFixed(1)}%',
-                      radius: 60,
-                      titleStyle: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    PieChartSectionData(
-                      color: Colors.red,
-                      value: expense,
-                      title: '${(expense / (income + expense) * 100).toStringAsFixed(1)}%',
-                      radius: 60,
-                      titleStyle: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                  centerSpaceRadius: 40,
-                  sectionsSpace: 2,
-                ),
-              ),
+          ),
+          PieChartSectionData(
+            color: Colors.red,
+            value: expense,
+            title: '\$${expense.toStringAsFixed(0)}',
+            radius: 60,
+            titleStyle: TextStyle(
+              fontSize: 12,
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
             ),
-            SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _buildLegendItem(Colors.green, 'Income'),
-                SizedBox(width: 20),
-                _buildLegendItem(Colors.red, 'Expenses'),
-              ],
-            ),
-          ],
-        ),
+          ),
+        ],
+        centerSpaceRadius: 40,
+        sectionsSpace: 2,
       ),
     );
   }
 
-  Widget _buildCategoryChart({
+  Widget _buildCategoryPieChart(
+      Map<String, double> data, {
+        required bool isIncome,
+        required Function(String) onCategoryTap,
+      }) {
+    return PieChart(
+      PieChartData(
+        pieTouchData: PieTouchData(
+          touchCallback: (FlTouchEvent event, pieTouchResponse) {
+            if (event is FlTapUpEvent && pieTouchResponse?.touchedSection != null) {
+              final touchedIndex = pieTouchResponse!.touchedSection!.touchedSectionIndex;
+              final category = data.keys.toList()[touchedIndex];
+              onCategoryTap(category);
+            }
+          },
+        ),
+        sections: data.entries.map((entry) {
+          final color = isIncome
+              ? Colors.green.withOpacity(0.7)
+              : Colors.red.withOpacity(0.7);
+          return PieChartSectionData(
+            color: color,
+            value: entry.value,
+            title: '\$${entry.value.toStringAsFixed(0)}',
+            radius: 60,
+            titleStyle: TextStyle(
+              fontSize: 10,
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          );
+        }).toList(),
+        centerSpaceRadius: 40,
+        sectionsSpace: 2,
+      ),
+    );
+  }
+
+  Widget _buildCategoryBarChart({
     required String title,
     required Map<String, double> data,
     required bool isIncome,
+    required Map<String, List<Map<String, dynamic>>> subcategories,
+    required Function(String) onCategoryTap,
   }) {
     final colors = isIncome
         ? [Colors.green[300]!, Colors.green[500]!, Colors.green[700]!]
@@ -351,13 +519,20 @@ class _ReportScreenState extends State<ReportScreen> {
             ),
             SizedBox(height: 10),
             SizedBox(
-              height: 200,
+              height: 300,
               child: BarChart(
                 BarChartData(
                   alignment: BarChartAlignment.spaceAround,
                   maxY: data.values.reduce((a, b) => a > b ? a : b) * 1.2,
                   barTouchData: BarTouchData(
                     enabled: true,
+                    touchCallback: (FlTouchEvent event, response) {
+                      if (response?.spot != null && event is FlTapUpEvent) {
+                        final touchedIndex = response!.spot!.touchedBarGroupIndex;
+                        final category = data.keys.toList()[touchedIndex];
+                        onCategoryTap(category);
+                      }
+                    },
                     touchTooltipData: BarTouchTooltipData(
                       getTooltipColor: (group) => Colors.grey[800]!,
                       getTooltipItem: (group, groupIndex, rod, rodIndex) {
@@ -396,12 +571,39 @@ class _ReportScreenState extends State<ReportScreen> {
                     leftTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
+                        getTitlesWidget: (value, meta) {
+                          return Text(
+                            '\$${value.toInt()}',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey[600],
+                            ),
+                          );
+                        },
                         reservedSize: 40,
                       ),
                     ),
+                    rightTitles: AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    topTitles: AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
                   ),
-                  gridData: FlGridData(show: true),
-                  borderData: FlBorderData(show: true),
+                  gridData: FlGridData(
+                    show: true,
+                    drawVerticalLine: false,
+                    horizontalInterval: data.values.reduce((a, b) => a > b ? a : b) / 5,
+                  ),
+                  borderData: FlBorderData(
+                    show: true,
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Colors.grey[300]!,
+                        width: 1,
+                      ),
+                    ),
+                  ),
                   barGroups: data.entries.map((entry) {
                     final index = data.keys.toList().indexOf(entry.key);
                     return BarChartGroupData(
@@ -419,17 +621,35 @@ class _ReportScreenState extends State<ReportScreen> {
                 ),
               ),
             ),
+            SizedBox(height: 10),
+            Text(
+              'Tap on a bar to see category details',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTrendChart(Map<String, Map<String, double>> monthlyTrends) {
-    final months = monthlyTrends.keys.toList();
-    final maxValue = monthlyTrends.values.fold(0.0, (max, data) {
+  Widget _buildTrendChart(
+      Map<String, Map<String, double>> trends, {
+        required String title,
+        bool isSavings = false,
+        bool showLabels = false,
+        bool showHorizontalAxis = false,
+      }) {
+    final months = trends.keys.toList();
+    final maxValue = trends.values.fold(0.0, (max, data) {
       final currentMax = data.values.fold(0.0, (currMax, val) => val > currMax ? val : currMax);
       return currentMax > max ? currentMax : max;
+    });
+    final minValue = trends.values.fold(double.infinity, (min, data) {
+      final currentMin = data.values.fold(double.infinity, (currMin, val) => val < currMin ? val : currMin);
+      return currentMin < min ? currentMin : min;
     });
 
     return Card(
@@ -440,7 +660,7 @@ class _ReportScreenState extends State<ReportScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Monthly Trends (Last 6 Months)',
+              title,
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             SizedBox(height: 10),
@@ -454,16 +674,20 @@ class _ReportScreenState extends State<ReportScreen> {
                       getTooltipItems: (List<LineBarSpot> touchedSpots) {
                         return touchedSpots.map((spot) {
                           final month = months[spot.x.toInt()];
-                          final type = spot.barIndex == 0 ? 'Income' : 'Expense';
+                          final value = spot.y;
                           return LineTooltipItem(
-                            '$month\n$type: \$${spot.y.toStringAsFixed(2)}',
+                            '$month\n\$${value.toStringAsFixed(2)}',
                             TextStyle(color: Colors.white),
                           );
                         }).toList();
                       },
                     ),
                   ),
-                  gridData: FlGridData(show: true),
+                  gridData: FlGridData(
+                    show: true,
+                    drawVerticalLine: false,
+                    horizontalInterval: maxValue / 5,
+                  ),
                   titlesData: FlTitlesData(
                     show: true,
                     bottomTitles: AxisTitles(
@@ -489,56 +713,103 @@ class _ReportScreenState extends State<ReportScreen> {
                     ),
                     leftTitles: AxisTitles(
                       sideTitles: SideTitles(
-                        showTitles: true,
+                        showTitles: showLabels,
+                        getTitlesWidget: (value, meta) {
+                          return Text(
+                            '\$${value.toStringAsFixed(0)}',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey[600],
+                            ),
+                          );
+                        },
                         reservedSize: 40,
                       ),
                     ),
+                    rightTitles: AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    topTitles: AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
                   ),
-                  borderData: FlBorderData(show: true),
+                  borderData: FlBorderData(
+                    show: showHorizontalAxis,
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Colors.grey[300]!,
+                        width: 1,
+                      ),
+                    ),
+                  ),
                   minX: 0,
                   maxX: months.length - 1,
-                  minY: 0,
+                  minY: isSavings ? minValue * 1.1 : 0,
                   maxY: maxValue * 1.2,
                   lineBarsData: [
-                    LineChartBarData(
-                      spots: months.asMap().entries.map((entry) {
-                        return FlSpot(
-                          entry.key.toDouble(),
-                          monthlyTrends[entry.value]!['income']!,
-                        );
-                      }).toList(),
-                      isCurved: true,
-                      color: Colors.green,
-                      barWidth: 3,
-                      belowBarData: BarAreaData(show: false),
-                      dotData: FlDotData(show: true),
-                    ),
-                    LineChartBarData(
-                      spots: months.asMap().entries.map((entry) {
-                        return FlSpot(
-                          entry.key.toDouble(),
-                          monthlyTrends[entry.value]!['expense']!,
-                        );
-                      }).toList(),
-                      isCurved: true,
-                      color: Colors.red,
-                      barWidth: 3,
-                      belowBarData: BarAreaData(show: false),
-                      dotData: FlDotData(show: true),
-                    ),
+                    if (!isSavings)
+                      LineChartBarData(
+                        spots: months.asMap().entries.map((entry) {
+                          return FlSpot(
+                            entry.key.toDouble(),
+                            trends[entry.value]!['income']!,
+                          );
+                        }).toList(),
+                        isCurved: false,
+                        color: Colors.green,
+                        barWidth: 3,
+                        belowBarData: BarAreaData(show: false),
+                        dotData: FlDotData(show: true),
+                      ),
+                    if (!isSavings)
+                      LineChartBarData(
+                        spots: months.asMap().entries.map((entry) {
+                          return FlSpot(
+                            entry.key.toDouble(),
+                            trends[entry.value]!['expense']!,
+                          );
+                        }).toList(),
+                        isCurved: false,
+                        color: Colors.red,
+                        barWidth: 3,
+                        belowBarData: BarAreaData(show: false),
+                        dotData: FlDotData(show: true),
+                      ),
+                    if (isSavings)
+                      LineChartBarData(
+                        spots: months.asMap().entries.map((entry) {
+                          return FlSpot(
+                            entry.key.toDouble(),
+                            trends[entry.value]!['savings']!,
+                          );
+                        }).toList(),
+                        isCurved: false,
+                        color: Colors.blue,
+                        barWidth: 3,
+                        belowBarData: BarAreaData(show: false),
+                        dotData: FlDotData(show: true),
+                      ),
                   ],
                 ),
               ),
             ),
             SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _buildLegendItem(Colors.green, 'Income'),
-                SizedBox(width: 20),
-                _buildLegendItem(Colors.red, 'Expenses'),
-              ],
-            ),
+            if (!isSavings)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _buildLegendItem(Colors.green, 'Income'),
+                  SizedBox(width: 20),
+                  _buildLegendItem(Colors.red, 'Expenses'),
+                ],
+              ),
+            if (isSavings)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _buildLegendItem(Colors.blue, 'Savings'),
+                ],
+              ),
           ],
         ),
       ),
@@ -576,22 +847,18 @@ class _ReportScreenState extends State<ReportScreen> {
     final isTransfer = t['type'] == 'Transfer';
     final amount = (t['amount'] as num).toDouble();
 
-    // Fix date parsing - handle both formats
     DateTime date;
     try {
-      // First try parsing as ISO format (what DateTime.parse expects)
       date = DateTime.parse(t['date'] as String);
     } catch (e) {
       try {
-        // If that fails, try parsing your custom format (DD/MM/YYYY)
         final parts = (t['date'] as String).split('/');
         date = DateTime(
-          int.parse(parts[2]), // year
-          int.parse(parts[1]), // month
-          int.parse(parts[0]), // day
+          int.parse(parts[2]),
+          int.parse(parts[1]),
+          int.parse(parts[0]),
         );
       } catch (e) {
-        // If both fail, use current date as fallback
         date = DateTime.now();
       }
     }
@@ -644,5 +911,132 @@ class _ReportScreenState extends State<ReportScreen> {
         ),
       ],
     );
+  }
+
+  Future<Map<String, dynamic>> _fetchReportData(int month, int year) async {
+    final db = DatabaseHelper();
+
+    // Get totals for the selected month
+    final totalIncome = await db.getTotalByTypeForMonth('Income', month, year) ?? 0.0;
+    final totalExpenses = await db.getTotalByTypeForMonth('Expense', month, year) ?? 0.0;
+
+    // Get transactions for the selected month
+    final transactions = await db.getTransactionsForMonth(month, year);
+
+    // Calculate expenses by category
+    final expensesByCategory = <String, double>{};
+    final incomeByCategory = <String, double>{};
+    final subcategories = <String, List<Map<String, dynamic>>>{};
+
+    for (final t in transactions) {
+      if (t['type'] == 'Expense' && t['category'] != null) {
+        final category = t['category'] as String;
+        final amount = (t['amount'] as num).toDouble();
+        expensesByCategory[category] = (expensesByCategory[category] ?? 0) + amount;
+
+        // Group by subcategory
+        final subcategory = t['subcategory'] as String? ?? 'Uncategorized';
+        if (!subcategories.containsKey(category)) {
+          subcategories[category] = [];
+        }
+        subcategories[category]!.add({
+          'name': subcategory,
+          'amount': amount,
+        });
+      } else if (t['type'] == 'Income' && t['category'] != null) {
+        final category = t['category'] as String;
+        final amount = (t['amount'] as num).toDouble();
+        incomeByCategory[category] = (incomeByCategory[category] ?? 0) + amount;
+
+        // Group by subcategory
+        final subcategory = t['subcategory'] as String? ?? 'Uncategorized';
+        if (!subcategories.containsKey(category)) {
+          subcategories[category] = [];
+        }
+        subcategories[category]!.add({
+          'name': subcategory,
+          'amount': amount,
+        });
+      }
+    }
+
+    // Get monthly trends (last 6 months)
+    final monthlyTrends = await _getMonthlyTrends();
+
+    // Get savings trends (last 6 months)
+    final savingsTrends = await _getSavingsTrends();
+
+    return {
+      'totalIncome': totalIncome,
+      'totalExpenses': totalExpenses,
+      'expensesByCategory': expensesByCategory,
+      'incomeByCategory': incomeByCategory,
+      'monthlyTrends': monthlyTrends,
+      'savingsTrends': savingsTrends,
+      'transactions': transactions,
+      'subcategories': subcategories,
+    };
+  }
+
+  Future<Map<String, Map<String, double>>> _getMonthlyTrends() async {
+    final db = DatabaseHelper();
+    final now = DateTime.now();
+    final result = <String, Map<String, double>>{};
+
+    for (int i = 5; i >= 0; i--) {
+      final month = DateTime(now.year, now.month - i, 1);
+      final monthKey = DateFormat('MMM y').format(month);
+
+      final income = await db.getTotalByTypeForMonth('Income', month.month, month.year) ?? 0.0;
+      final expense = await db.getTotalByTypeForMonth('Expense', month.month, month.year) ?? 0.0;
+
+      result[monthKey] = {
+        'income': income,
+        'expense': expense,
+      };
+    }
+
+    return result;
+  }
+
+  Future<Map<String, Map<String, double>>> _getSavingsTrends() async {
+    final db = DatabaseHelper();
+    final now = DateTime.now();
+    final result = <String, Map<String, double>>{};
+    double cumulativeSavings = 0.0;
+
+    for (int i = 5; i >= 0; i--) {
+      final month = DateTime(now.year, now.month - i, 1);
+      final monthKey = DateFormat('MMM y').format(month);
+
+      final income = await db.getTotalByTypeForMonth('Income', month.month, month.year) ?? 0.0;
+      final expense = await db.getTotalByTypeForMonth('Expense', month.month, month.year) ?? 0.0;
+      final savings = income - expense;
+      cumulativeSavings += savings;
+
+      result[monthKey] = {
+        'savings': cumulativeSavings,
+      };
+    }
+
+    return result;
+  }
+
+  Future<void> _selectMonth(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedMonth,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDatePickerMode: DatePickerMode.year,
+    );
+
+    if (picked != null && picked != _selectedMonth) {
+      setState(() {
+        _selectedMonth = picked;
+        _showCategoryDetails = false;
+        _selectedCategory = null;
+      });
+    }
   }
 }
