@@ -428,16 +428,23 @@ class DatabaseHelper {
   }
 
   Future<void> _updateBudgetSpending(DatabaseExecutor db, String category, double amount) async {
-    // Get current month/year
     final now = DateTime.now();
     final yearMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}';
 
-    // Update the budget's current month spending
-    await db.rawUpdate('''
-    UPDATE budgets 
-    SET current_month_spent = current_month_spent + ?
-    WHERE category = ? AND year_month = ? AND is_active = 1
-  ''', [amount, category, yearMonth]);
+    // Check if budget exists
+    final budget = await db.query(
+      'budgets',
+      where: 'category = ? AND year_month = ?',
+      whereArgs: [category, yearMonth],
+    );
+
+    if (budget.isNotEmpty) {
+      await db.rawUpdate('''
+      UPDATE budgets 
+      SET current_month_spent = current_month_spent + ?
+      WHERE category = ? AND year_month = ?
+    ''', [amount, category, yearMonth]);
+    }
   }
 
   Future<int> updateTransactionType(int transactionId, String newType,
@@ -737,29 +744,38 @@ class DatabaseHelper {
 
 
   //Budget Operations
-  Future<List<Map<String, dynamic>>> getBudgets() async {
+  Future<List<Map<String, dynamic>>> getBudgets({String? yearMonth}) async {
     final db = await database;
-    try {
-      return await db.query('budgets');
-    } catch (e) {
-      // If query fails, try with alternative column name
-      try {
-        return await db.rawQuery('''
-        SELECT 
-          id, 
-          category_name as category, 
-          type, 
-          budget_limit, 
-          spent, 
-          created_at,
-          COALESCE(period, 'monthly') as period
-        FROM budgets
-      ''');
-      } catch (e) {
-        debugPrint('Error fetching budgets: $e');
-        return [];
-      }
+    if (yearMonth != null) {
+      return await db.query(
+        'budgets',
+        where: 'year_month = ?',
+        whereArgs: [yearMonth],
+      );
     }
+    return await db.query('budgets');
+  }
+
+  Future<List<Map<String, dynamic>>> getActiveBudgets() async {
+    final db = await database;
+    final now = DateTime.now();
+    final yearMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+
+    return await db.query(
+      'budgets',
+      where: 'year_month = ? AND is_active = 1',
+      whereArgs: [yearMonth],
+    );
+  }
+
+  Future<Map<String, dynamic>?> getBudgetById(int id) async {
+    final db = await database;
+    final result = await db.query(
+      'budgets',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    return result.isNotEmpty ? result.first : null;
   }
 
   Future<Map<String, dynamic>?> getBudgetByCategory(String category, String yearMonth) async {
@@ -773,18 +789,60 @@ class DatabaseHelper {
     return result.isNotEmpty ? result.first : null;
   }
 
-  Future<int> addBudget(Map<String, dynamic> budget) async {
+  Future<Map<String, dynamic>?> getLatestBudget() async {
     final db = await database;
-    return await db.insert('budgets', {
-      'category': budget['category'],
-      'type': budget['type'] ?? 'expense',
-      'budget_limit': budget['budget_limit'],
-      'current_month_spent': budget['current_month_spent'] ?? 0.0,
-      'previous_months_spent': budget['previous_months_spent'] ?? 0.0,
-      'year_month': budget['year_month'],
-      'created_at': budget['created_at'] ?? DateTime.now().toIso8601String(),
-      'is_active': budget['is_active'] ?? 1
-    });
+    final result = await db.rawQuery('''
+    SELECT * FROM budgets 
+    ORDER BY year_month DESC, created_at DESC 
+    LIMIT 1
+  ''');
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  Future<List<String>> getBudgetMonths() async {
+    final db = await database;
+    final result = await db.rawQuery('''
+    SELECT DISTINCT year_month FROM budgets 
+    ORDER BY year_month DESC
+  ''');
+    return result.map((e) => e['year_month'] as String).toList();
+  }
+
+  Future<Map<String, dynamic>> getBudgetSummary(String yearMonth) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+    SELECT 
+      SUM(budget_limit) as total_budget,
+      SUM(current_month_spent) as total_spent,
+      SUM(budget_limit - current_month_spent) as total_remaining
+    FROM budgets
+    WHERE year_month = ? AND is_active = 1
+  ''', [yearMonth]);
+
+    return {
+      'total_budget': (result.first['total_budget'] as num?)?.toDouble() ?? 0.0,
+      'total_spent': (result.first['total_spent'] as num?)?.toDouble() ?? 0.0,
+      'total_remaining': (result.first['total_remaining'] as num?)?.toDouble() ?? 0.0,
+    };
+  }
+
+  Future<int> addBudget(Map<String, dynamic> budget) async {
+    try {
+      final db = await database;
+      return await db.insert('budgets', {
+        'category': budget['category'],
+        'type': budget['type'] ?? 'expense',
+        'budget_limit': budget['budget_limit'],
+        'current_month_spent': budget['current_month_spent'] ?? 0.0,
+        'previous_months_spent': budget['previous_months_spent'] ?? 0.0,
+        'year_month': budget['year_month'],
+        'created_at': budget['created_at'] ?? DateTime.now().toIso8601String(),
+        'is_active': budget['is_active'] ?? 1
+      });
+    } catch (e) {
+      debugPrint('Error adding budget: $e');
+      return -1;
+    }
   }
 
   Future<int> updateBudget(Map<String, dynamic> budget) async {
@@ -793,8 +851,12 @@ class DatabaseHelper {
       'budgets',
       {
         'category': budget['category'],
+        'type': budget['type'],
         'budget_limit': budget['budget_limit'],
-        // Add other fields you want to update
+        'current_month_spent': budget['current_month_spent'],
+        'previous_months_spent': budget['previous_months_spent'],
+        'year_month': budget['year_month'],
+        'is_active': budget['is_active'],
       },
       where: 'id = ?',
       whereArgs: [budget['id']],
@@ -830,5 +892,4 @@ class DatabaseHelper {
     ORDER BY t1.date DESC
   ''');
   }
-
 }

@@ -461,10 +461,7 @@ class _TransactionPageState extends State<TransactionPage> {
           _showError('Cannot transfer to same account');
           return;
         }
-
         onChanged(newValue);
-
-        // Handle subcategory updates when category changes
         if (selectedTransactionType != 'Transfer' && label == 'Category' && newValue != null) {
           _loadSubcategories(newValue).then((_) {
             // This ensures the UI updates after subcategories are loaded

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 class AppRefreshNotifier extends ChangeNotifier {
   bool _shouldRefreshAccounts = false;
   bool _shouldRefreshTransactions = false;
+  bool _shouldRefreshBudgets = false;
 
   void refreshAccounts() {
     _shouldRefreshAccounts = true;
@@ -14,6 +15,10 @@ class AppRefreshNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
+  void refreshBudgets() {
+    _shouldRefreshBudgets = true;
+  }
+
   void accountRefreshComplete() {
     _shouldRefreshAccounts = false;
   }
@@ -22,6 +27,11 @@ class AppRefreshNotifier extends ChangeNotifier {
     _shouldRefreshTransactions = false;
   }
 
+  void budgetRefreshComplete() {
+    _shouldRefreshBudgets = false;
+  }
+
   bool get shouldRefreshAccounts => _shouldRefreshAccounts;
   bool get shouldRefreshTransactions => _shouldRefreshTransactions;
+  bool get shouldRefreshBudgets => _shouldRefreshBudgets;
 }

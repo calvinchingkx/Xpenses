@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:pull_to_refresh/pull_to_refresh.dart';
+import 'package:provider/provider.dart';
+import 'app_refresh_notifier.dart';
 import 'database_helper.dart';
 
 class BudgetScreen extends StatefulWidget {
@@ -14,6 +16,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
   bool _isLoading = false;
   String _sortBy = 'category';
   bool _sortAscending = true;
+  String? _selectedMonth;
 
   @override
   void initState() {
@@ -21,10 +24,27 @@ class _BudgetScreenState extends State<BudgetScreen> {
     _loadData();
   }
 
+  @override
+  void dispose() {
+    _refreshController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadData() async {
+    if (_isLoading) return;
+
     setState(() => _isLoading = true);
     try {
-      final budgets = await DatabaseHelper().getBudgets();
+      final currentDate = DateTime.now();
+      final yearMonth = _selectedMonth ?? '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
+
+      // Check if we need to create new monthly budgets
+      final lastBudget = await DatabaseHelper().getLatestBudget();
+      if (lastBudget != null && lastBudget['year_month'] != yearMonth) {
+        await _createNewMonthBudgets(lastBudget, yearMonth);
+      }
+
+      final budgets = await DatabaseHelper().getBudgets(yearMonth: yearMonth);
       final categories = await DatabaseHelper().getCategories('expense');
 
       setState(() {
@@ -38,30 +58,81 @@ class _BudgetScreenState extends State<BudgetScreen> {
     } catch (e) {
       _showError('Failed to load data: ${e.toString()}');
     } finally {
-      setState(() => _isLoading = false);
-      _refreshController.refreshCompleted();
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _refreshController.refreshCompleted();
+        Provider.of<AppRefreshNotifier>(context, listen: false).budgetRefreshComplete();
+      }
+    }
+  }
+
+  Future<void> _onRefresh() async {
+    try {
+      await _loadData();
+    } catch (e) {
+      if (mounted) {
+        _refreshController.refreshFailed();
+        _showError('Refresh failed: ${e.toString()}');
+      }
+    }
+  }
+
+  Future<void> _createNewMonthBudgets(Map<String, dynamic> lastBudget, String newYearMonth) async {
+    try {
+      // Get all active budgets from previous month
+      final previousBudgets = await DatabaseHelper().getActiveBudgets();
+
+      for (var budget in previousBudgets) {
+        // Create new budget with same settings but reset spent amount
+        await DatabaseHelper().addBudget({
+          'category': budget['category'],
+          'type': budget['type'],
+          'budget_limit': budget['budget_limit'],
+          'current_month_spent': 0.0,
+          'previous_months_spent': (budget['current_month_spent'] as num).toDouble(),
+          'year_month': newYearMonth,
+          'created_at': DateTime.now().toIso8601String(),
+          'is_active': 1
+        });
+
+        // Deactivate old budget
+        await DatabaseHelper().updateBudget({
+          'id': budget['id'],
+          'is_active': 0
+        });
+      }
+    } catch (e) {
+      _showError('Failed to create new month budgets: ${e.toString()}');
     }
   }
 
   List<Map<String, dynamic>> _sortBudgets(List<Map<String, dynamic>> budgets) {
     return List.from(budgets)..sort((a, b) {
+      String getValue(String key, Map<String, dynamic> item) =>
+          item[key]?.toString().toLowerCase() ?? '';
+
+      double getLimit(Map<String, dynamic> item) =>
+          (item['budget_limit'] as num?)?.toDouble() ?? 0.0;
+
+      double getSpent(Map<String, dynamic> item) =>
+          (item['current_month_spent'] as num?)?.toDouble() ?? 0.0;
+
+      double getRemaining(Map<String, dynamic> item) =>
+          getLimit(item) - getSpent(item);
+
       switch (_sortBy) {
         case 'budget_limit':
-          final aLimit = (a['budget_limit'] as num).toDouble();
-          final bLimit = (b['budget_limit'] as num).toDouble();
-          return _sortAscending ? aLimit.compareTo(bLimit) : bLimit.compareTo(aLimit);
+          final comparison = getLimit(a).compareTo(getLimit(b));
+          return _sortAscending ? comparison : -comparison;
         case 'spent':
-          final aSpent = (a['current_month_spent'] as num).toDouble();
-          final bSpent = (b['current_month_spent'] as num).toDouble();
-          return _sortAscending ? aSpent.compareTo(bSpent) : bSpent.compareTo(aSpent);
+          final comparison = getSpent(a).compareTo(getSpent(b));
+          return _sortAscending ? comparison : -comparison;
         case 'remaining':
-          final aRemaining = (a['budget_limit'] as num).toDouble() - (a['current_month_spent'] as num).toDouble();
-          final bRemaining = (b['budget_limit'] as num).toDouble() - (b['current_month_spent'] as num).toDouble();
-          return _sortAscending ? aRemaining.compareTo(bRemaining) : bRemaining.compareTo(aRemaining);
+          final comparison = getRemaining(a).compareTo(getRemaining(b));
+          return _sortAscending ? comparison : -comparison;
         default: // category
-          final aCat = a['category']?.toString().toLowerCase() ?? '';
-          final bCat = b['category']?.toString().toLowerCase() ?? '';
-          return _sortAscending ? aCat.compareTo(bCat) : bCat.compareTo(aCat);
+          final comparison = getValue('category', a).compareTo(getValue('category', b));
+          return _sortAscending ? comparison : -comparison;
       }
     });
   }
@@ -69,14 +140,14 @@ class _BudgetScreenState extends State<BudgetScreen> {
   Future<void> _saveBudget(int? id, String category, double amount) async {
     try {
       final currentDate = DateTime.now();
-      final yearMonth = '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
+      final yearMonth = _selectedMonth ?? '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
 
       if (id == null) {
         await DatabaseHelper().addBudget({
           'category': category,
           'type': 'expense',
           'budget_limit': amount,
-          'current_month_spent': 0.0,  // Changed from 'spent' to 'current_month_spent'
+          'current_month_spent': 0.0,
           'previous_months_spent': 0.0,
           'year_month': yearMonth,
           'created_at': currentDate.toIso8601String(),
@@ -116,47 +187,132 @@ class _BudgetScreenState extends State<BudgetScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Budget Overview'),
-        actions: [
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              setState(() {
-                if (value == _sortBy) {
-                  _sortAscending = !_sortAscending;
-                } else {
-                  _sortBy = value;
-                  _sortAscending = true;
-                }
-                _budgets = _sortBudgets(_budgets);
-              });
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'category',
-                child: Text('Sort by Category'),
-              ),
-              const PopupMenuItem(
-                value: 'budget_limit',
-                child: Text('Sort by Limit'),
-              ),
-              const PopupMenuItem(
-                value: 'spent',
-                child: Text('Sort by Spent'),
-              ),
-              const PopupMenuItem(
-                value: 'remaining',
-                child: Text('Sort by Remaining'),
-              ),
+    return Consumer<AppRefreshNotifier>(
+      builder: (context, refreshNotifier, _) {
+        if (refreshNotifier.shouldRefreshBudgets) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _loadData();
+            refreshNotifier.budgetRefreshComplete();
+          });
+        }
+
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Budget Overview'),
+            actions: [
+              _buildMonthSelector(),
+              _buildSortMenu(),
             ],
           ),
+          body: _buildRefreshableList(),
+          floatingActionButton: FloatingActionButton(
+            onPressed: () => _showBudgetDialog(null),
+            child: const Icon(Icons.add),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSortMenu() {
+    return PopupMenuButton<String>(
+      onSelected: (value) {
+        setState(() {
+          if (value == _sortBy) {
+            _sortAscending = !_sortAscending;
+          } else {
+            _sortBy = value;
+            _sortAscending = true;
+          }
+          _budgets = _sortBudgets(_budgets);
+        });
+      },
+      itemBuilder: (context) => [
+        _buildSortMenuItem('category', 'Sort by Category'),
+        _buildSortMenuItem('budget_limit', 'Sort by Limit'),
+        _buildSortMenuItem('spent', 'Sort by Spent'),
+        _buildSortMenuItem('remaining', 'Sort by Remaining'),
+      ],
+      icon: const Icon(Icons.sort),
+    );
+  }
+
+  Widget _buildMonthSelector() {
+    return FutureBuilder<List<String>>(
+      future: DatabaseHelper().getBudgetMonths(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return Container();
+        }
+
+        final currentDate = DateTime.now();
+        final currentYearMonth = '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
+        final selectedMonth = _selectedMonth ?? currentYearMonth;
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+          child: DropdownButton<String>(
+            value: selectedMonth,
+            items: snapshot.data!.map((month) => DropdownMenuItem(
+              value: month,
+              child: Text(month),
+            )).toList(),
+            onChanged: (month) {
+              setState(() {
+                _selectedMonth = month;
+                _loadData();
+              });
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  PopupMenuItem<String> _buildSortMenuItem(String value, String text) {
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 26,
+            child: _sortBy == value
+                ? Icon(
+              _sortAscending ? Icons.arrow_upward : Icons.arrow_downward,
+              size: 18,
+            )
+                : null,
+          ),
+          const SizedBox(width: 8),
+          Text(text),
         ],
       ),
-      body: _isLoading && _budgets.isEmpty
-          ? const Center(child: CircularProgressIndicator())
-          : _budgets.isEmpty
-          ? Center(
+    );
+  }
+
+  Widget _buildRefreshableList() {
+    return SmartRefresher(
+      controller: _refreshController,
+      onRefresh: _onRefresh,
+      enablePullDown: true,
+      enablePullUp: false,
+      header: const ClassicHeader(
+        completeText: 'Refresh completed',
+        refreshingText: 'Refreshing...',
+        idleText: 'Pull down to refresh',
+        releaseText: 'Release to refresh',
+      ),
+      child: _buildBudgetsList(),
+    );
+  }
+
+  Widget _buildBudgetsList() {
+    if (_isLoading && _budgets.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_budgets.isEmpty) {
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -172,41 +328,54 @@ class _BudgetScreenState extends State<BudgetScreen> {
             ),
           ],
         ),
-      )
-          : SmartRefresher(
-        controller: _refreshController,
-        onRefresh: _loadData,
-        child: ListView.builder(
-          itemCount: _budgets.length,
-          itemBuilder: (context, index) {
-            final budget = _budgets[index];
-            final limit = (budget['budget_limit'] as num).toDouble();
-            final spent = (budget['current_month_spent'] as num).toDouble();
-            final remaining = limit - spent;
-            final percentage = limit > 0 ? (spent / limit) : 0;
+      );
+    }
 
-            return Card(
-              margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-              child: ListTile(
-                title: Text(budget['category']?.toString() ?? 'Uncategorized'),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Limit: \$${limit.toStringAsFixed(2)}'),
-                    Text('Spent: \$${spent.toStringAsFixed(2)}'),
-                    Text(
-                      'Remaining: \$${remaining.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        color: remaining >= 0 ? Colors.green : Colors.red,
-                        fontWeight: FontWeight.bold,
-                      ),
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 80),
+      children: [
+        _buildBudgetSummaryCard(),
+        ..._budgets.map((budget) {
+          final limit = (budget['budget_limit'] as num).toDouble();
+          final spent = (budget['current_month_spent'] as num).toDouble();
+          final remaining = limit - spent;
+          final percentage = limit > 0 ? (spent / limit) : 0;
+
+          // Show overspend alert if needed
+          if (remaining < 0) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _showOverspendAlert(budget['category'], remaining.abs());
+            });
+          }
+
+          return Card(
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: ListTile(
+              title: Text(budget['category']?.toString() ?? 'Uncategorized'),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Limit: \$${limit.toStringAsFixed(2)}'),
+                      Text('Spent: \$${spent.toStringAsFixed(2)}'),
+                    ],
+                  ),
+                  Text(
+                    'Remaining: \$${remaining.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      color: remaining >= 0 ? Colors.green : Colors.red,
+                      fontWeight: FontWeight.bold,
                     ),
-                    Text(
-                      'Period: ${budget['year_month'] ?? ''}',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    LinearProgressIndicator(
+                  ),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
                       value: (percentage > 1 ? 1 : percentage).toDouble(),
+                      minHeight: 6,
                       backgroundColor: Colors.grey[200],
                       valueColor: AlwaysStoppedAnimation<Color>(
                         percentage > 0.8
@@ -216,21 +385,29 @@ class _BudgetScreenState extends State<BudgetScreen> {
                             : Colors.green,
                       ),
                     ),
-                  ],
-                ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red),
-                  onPressed: () => _confirmDeleteBudget(budget['id']),
-                ),
-                onTap: () => _showBudgetDialog(budget),
+                  ),
+                ],
               ),
-            );
-          },
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showBudgetDialog(null),
-        child: const Icon(Icons.add),
+              trailing: IconButton(
+                icon: const Icon(Icons.delete, color: Colors.red),
+                onPressed: () => _confirmDeleteBudget(budget['id']),
+              ),
+              onTap: () => _showBudgetDialog(budget),
+            ),
+          );
+        }).toList(),
+      ],
+    );
+  }
+
+  void _showOverspendAlert(String category, double overspendAmount) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Budget overspent for $category by \$${overspendAmount.toStringAsFixed(2)}'),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 5),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
       ),
     );
   }
@@ -332,6 +509,65 @@ class _BudgetScreenState extends State<BudgetScreen> {
             child: const Text('Save'),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildBudgetSummaryCard() {
+    final totalLimit = _budgets.fold(0.0, (sum, b) => sum + (b['budget_limit'] as num).toDouble());
+    final totalSpent = _budgets.fold(0.0, (sum, b) => sum + (b['current_month_spent'] as num).toDouble());
+    final totalRemaining = totalLimit - totalSpent;
+    final percentageSpent = totalLimit > 0 ? (totalSpent / totalLimit) : 0;
+
+    return Card(
+      margin: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Total Budget', style: TextStyle(fontSize: 14, color: Colors.grey)),
+                    Text('\$${totalLimit.toStringAsFixed(2)}',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text('Remaining', style: TextStyle(fontSize: 14, color: Colors.grey)),
+                    Text('\$${totalRemaining.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: totalRemaining >= 0 ? Colors.green : Colors.red,
+                        )),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: (percentageSpent > 1 ? 1 : percentageSpent).toDouble(),
+                minHeight: 8,
+                backgroundColor: Colors.grey[200],
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  percentageSpent > 0.8
+                      ? percentageSpent > 1
+                      ? Colors.red
+                      : Colors.orange
+                      : Colors.green,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
