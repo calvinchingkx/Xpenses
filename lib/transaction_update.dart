@@ -4,21 +4,21 @@ import 'package:provider/provider.dart';
 import 'database_helper.dart';
 import 'app_refresh_notifier.dart';
 
-class TransactionDetailPage extends StatefulWidget {
+class TransactionUpdatePage extends StatefulWidget {
   final Map<String, dynamic> transaction;
   final ScrollController? scrollController;
 
-  const TransactionDetailPage({
+  const TransactionUpdatePage({
     Key? key,
     required this.transaction,
     this.scrollController,
   }) : super(key: key);
 
   @override
-  _TransactionDetailPageState createState() => _TransactionDetailPageState();
+  _TransactionUpdatePageState createState() => _TransactionUpdatePageState();
 }
 
-class _TransactionDetailPageState extends State<TransactionDetailPage> {
+class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _noteController;
   late final TextEditingController _amountController;

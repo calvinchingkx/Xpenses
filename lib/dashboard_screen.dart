@@ -343,9 +343,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ...transactions.map((transaction) => _TransactionTile(
               transaction: transaction,
               onTap: () => _showCustomBottomSheet(
-                TransactionDetailPage(transaction: transaction),
+                TransactionUpdatePage(transaction: transaction),
                 onDismiss: _refreshData,
-              ),
+              )
             )),
           ],
         );
@@ -394,10 +394,17 @@ class _TransactionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final isTransfer = transaction['type'] == 'Transfer';
     final amountColor = isTransfer
-        ? Colors.blueGrey
+        ? Colors.grey // Changed to grey for transfers
         : transaction['type'] == "Income"
         ? Colors.blueGrey
         : Colors.red;
+
+    // Build category text with subcategory if available
+    final categoryText = isTransfer
+        ? 'Transfer'
+        : transaction['subcategory']?.isNotEmpty == true
+        ? '${transaction['category']}/\n${transaction['subcategory']}'
+        : transaction['category'] ?? 'No Category';
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 14.0),
@@ -411,9 +418,7 @@ class _TransactionTile extends StatelessWidget {
               child: Align(
                 alignment: Alignment.bottomLeft,
                 child: Text(
-                  isTransfer
-                      ? 'Transfer'
-                      : transaction['category'] ?? 'No Category',
+                  categoryText, // Use the built category text
                   style: const TextStyle(fontSize: 12, color: Colors.black54),
                 ),
               ),
@@ -446,6 +451,7 @@ class _TransactionTile extends StatelessWidget {
               style: TextStyle(
                 fontSize: 16,
                 color: amountColor,
+                fontWeight: isTransfer ? FontWeight.normal : FontWeight.bold,
               ),
             ),
           ],
