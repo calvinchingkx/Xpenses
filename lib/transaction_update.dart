@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'database_helper.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 import 'app_refresh_notifier.dart';
+import 'database_helper.dart';
 
 class TransactionUpdatePage extends StatefulWidget {
   final Map<String, dynamic> transaction;
@@ -18,6 +21,14 @@ class TransactionUpdatePage extends StatefulWidget {
   _TransactionUpdatePageState createState() => _TransactionUpdatePageState();
 }
 
+class ReceiptData {
+  final String? amount;
+  final String? note;
+  final String? date;
+
+  ReceiptData({this.amount, this.note, this.date});
+}
+
 class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _noteController;
@@ -28,6 +39,7 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
   String? selectedCategory;
   String? selectedSubcategory;
   String? selectedToAccount;
+  bool _isProcessing = false;
 
   List<String> accountTypes = [];
   List<String> categories = [];
@@ -140,8 +152,9 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
     }
   }
 
-  Future<void> _fetchSubcategories() async {
-    if (selectedTransactionType == 'Transfer' || selectedCategory == null) {
+  Future<void> _fetchSubcategories([String? categoryName]) async {
+    final categoryToFetch = categoryName ?? selectedCategory;
+    if (selectedTransactionType == 'Transfer' || categoryToFetch == null) {
       setState(() => subcategories = []);
       return;
     }
@@ -151,7 +164,7 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
           selectedTransactionType.toLowerCase()
       );
       final category = categories.firstWhere(
-            (c) => c['name'] == selectedCategory,
+            (c) => c['name'] == categoryToFetch,
         orElse: () => {},
       );
 
@@ -189,8 +202,9 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
   }
 
   Future<void> _updateTransaction() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate() || _isProcessing) return;
 
+    setState(() => _isProcessing = true);
     final refreshNotifier = Provider.of<AppRefreshNotifier>(context, listen: false);
 
     try {
@@ -247,6 +261,8 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
       Navigator.pop(context, true);
     } catch (e) {
       _showError('Failed to update transaction: ${e.toString()}');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -353,6 +369,236 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
     }
   }
 
+  Future<void> _showImageSourceDialog() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.camera_alt),
+            title: const Text('Take Photo'),
+            onTap: () => Navigator.pop(context, ImageSource.camera),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library),
+            title: const Text('Choose from Gallery'),
+            onTap: () => Navigator.pop(context, ImageSource.gallery),
+          ),
+        ],
+      ),
+    );
+
+    if (source != null) {
+      await _scanReceiptAndPredict(source);
+    }
+  }
+
+  Future<void> _scanReceiptAndPredict(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(source: source);
+      if (pickedFile == null) return;
+
+      setState(() => _isProcessing = true);
+
+      // Step 1: Preprocess image (improves OCR accuracy)
+      final inputImage = await _preprocessImage(File(pickedFile.path));
+
+      // Step 2: Text recognition
+      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
+      await textRecognizer.close();
+
+      final fullText = recognizedText.text;
+      debugPrint("Full OCR Output:\n$fullText");
+
+      // Step 3: Extract transaction details
+      final receiptData = _parseReceiptContent(fullText);
+
+      if (receiptData.amount != null) {
+        _amountController.text = receiptData.amount!;
+        if (receiptData.note != null) {
+          _noteController.text = receiptData.note!;
+          await _predictCategoryFromNote(receiptData.note!);
+        }
+        _showSuccess('Receipt scanned successfully');
+      } else {
+        _showError('Could not find valid amount in receipt');
+      }
+    } catch (e) {
+      _showError('Failed to process receipt: ${e.toString()}');
+      debugPrint('Error scanning receipt: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Future<InputImage> _preprocessImage(File imageFile) async {
+    // In a real app, you might want to add image preprocessing here
+    // For now, we'll just use the original image
+    return InputImage.fromFile(imageFile);
+  }
+
+  ReceiptData _parseReceiptContent(String fullText) {
+    final lines = fullText.split('\n').map((line) => line.trim()).where((line) => line.isNotEmpty).toList();
+    String? amount;
+    String? note;
+    String? date;
+
+    // Amount detection (more precise)
+    amount = _extractBestAmountMatch(lines);
+
+    // Merchant/note detection (smarter)
+    note = _extractMostLikelyMerchant(lines);
+
+    // Optional: Date detection
+    date = _extractPossibleDate(lines);
+
+    return ReceiptData(amount: amount, note: note, date: date);
+  }
+
+  String? _extractBestAmountMatch(List<String> lines) {
+    // Try to find amount in reverse order (usually at bottom)
+    for (var i = lines.length - 1; i >= 0; i--) {
+      final line = lines[i];
+
+      // Skip lines that are too long to be amounts
+      if (line.length > 15) continue;
+
+      // Try different amount patterns
+      final amountPatterns = [
+        // Currency symbols and common formats
+        RegExp(r'[$€£₹¥]\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)'),
+        RegExp(r'(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*(?:USD|EUR|GBP|INR|JPY)'),
+        // Standard number formats
+        RegExp(r'\b(\d+\.\d{2})\b'),
+        RegExp(r'\b(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\b'),
+        // Total lines
+        RegExp(r'(?:total|amount|balance|due|subtotal)\s*[:=]?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)', caseSensitive: false),
+      ];
+
+      for (final pattern in amountPatterns) {
+        final match = pattern.firstMatch(line);
+        if (match != null && match.group(1) != null) {
+          return match.group(1)!.replaceAll(',', '');
+        }
+      }
+    }
+    return null;
+  }
+
+  String? _extractMostLikelyMerchant(List<String> lines) {
+    final excludePatterns = [
+      'receipt', 'invoice', 'vat', 'tax', 'subtotal', 'total', 'amount',
+      'change', 'date', 'time', 'cash', 'card', 'thank', 'visa', 'mastercard',
+      'change', 'qty', 'quantity', 'discount', 'balance', 'due'
+    ];
+
+    // First pass: Look for merchant name at top (first 5 lines or less)
+    final topLines = lines.length > 5 ? lines.sublist(0, 5) : lines;
+    for (final line in topLines) {
+      if (_isLikelyMerchant(line, excludePatterns)) {
+        return line;
+      }
+    }
+
+    // Second pass: Look for any line that looks like a merchant
+    for (final line in lines) {
+      if (_isLikelyMerchant(line, excludePatterns)) {
+        return line;
+      }
+    }
+
+    return null;
+  }
+
+  bool _isLikelyMerchant(String line, List<String> excludePatterns) {
+    final lowerLine = line.toLowerCase();
+
+    // Skip if:
+    // - Too short or too long
+    // - Contains numbers
+    // - Matches exclude patterns
+    // - Looks like a date
+    if (line.length < 3 ||
+        line.length > 30 ||
+        RegExp(r'\d').hasMatch(line) ||
+        excludePatterns.any((pattern) => lowerLine.contains(pattern)) ||
+        _looksLikeDate(line)) {
+      return false;
+    }
+
+    // More checks for merchant-like lines
+    final words = line.split(' ');
+    if (words.length > 5) return false; // Too many words for a merchant name
+
+    // Contains uppercase letters (many merchants have capitalized names)
+    if (line == line.toUpperCase()) return true;
+
+    // Contains common merchant suffixes
+    const suffixes = ['ltd', 'inc', 'co', 'store', 'shop', 'restaurant'];
+    if (suffixes.any((suffix) => lowerLine.endsWith(suffix))) {
+      return true;
+    }
+
+    return true;
+  }
+
+  String? _extractPossibleDate(List<String> lines) {
+    final datePatterns = [
+      RegExp(r'\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b'),
+      RegExp(r'\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4})\b', caseSensitive: false),
+    ];
+
+    for (final line in lines) {
+      for (final pattern in datePatterns) {
+        final match = pattern.firstMatch(line);
+        if (match != null) {
+          return match.group(1);
+        }
+      }
+    }
+    return null;
+  }
+
+  bool _looksLikeDate(String line) {
+    return _extractPossibleDate([line]) != null;
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _predictCategoryFromNote(String note) async {
+    final normalizedNote = note.trim().toLowerCase();
+    try {
+      final predictedCategory = await DatabaseHelper.instance.getCategoryPreference(normalizedNote);
+      if (predictedCategory != null && mounted) {
+        final predictedCat = predictedCategory['category']!;
+        final predictedSub = predictedCategory['subcategory'];
+
+        // Load subcategories FIRST
+        await _fetchSubcategories(predictedCat);
+
+        if (mounted) {
+          setState(() {
+            selectedCategory = predictedCat;
+            selectedSubcategory = subcategories.contains(predictedSub) ? predictedSub : null;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error predicting category: $e');
+    }
+  }
+
   Widget _buildTypeSelector(String type, Color activeColor) {
     final isSelected = selectedTransactionType == type;
     return GestureDetector(
@@ -447,7 +693,7 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
   Widget _buildAmountField() {
     return TextFormField(
       controller: _amountController,
-      keyboardType: TextInputType.numberWithOptions(decimal: true),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
       decoration: const InputDecoration(
         labelText: "Amount",
         border: OutlineInputBorder(),
@@ -462,51 +708,6 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
     );
   }
 
-  Widget _buildNoteField() {
-    return TextFormField(
-      controller: _noteController,
-      decoration: const InputDecoration(
-        labelText: "Note",
-        border: OutlineInputBorder(),
-      ),
-      maxLines: 1,
-      textInputAction: TextInputAction.done,
-    );
-  }
-
-  Widget _buildActionButtons() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 20),
-      child: Row(
-        children: [
-          Expanded(
-            child: OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                side: const BorderSide(color: Colors.red),
-              ),
-              onPressed: _deleteTransaction,
-              child: const Text(
-                "DELETE",
-                style: TextStyle(color: Colors.red),
-              ),
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-              ),
-              onPressed: _updateTransaction,
-              child: const Text("SAVE"),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -518,82 +719,144 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
       },
       child: Stack(
         children: [
-          SingleChildScrollView(
-            controller: widget.scrollController,
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Transaction Type Selector
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: widget.scrollController,
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildTypeSelector("Income", Colors.blue),
-                        _buildTypeSelector("Expense", Colors.red),
-                        _buildTypeSelector("Transfer", Colors.blueGrey),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Date Picker
-                  _buildDateField(),
-                  const SizedBox(height: 20),
-
-                  // Note Field
-                  _buildNoteField(),
-                  const SizedBox(height: 20),
-
-                  // Account Dropdown
-                  _buildDropdown(
-                    selectedTransactionType == 'Transfer' ? 'From Account' : 'Account',
-                    accountTypes,
-                    selectedAccount,
-                        (value) {
-                      setState(() => selectedAccount = value);
-                      if (selectedTransactionType == 'Transfer') {
-                        _fetchCategoriesAndSubcategories();
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Category/To Account Dropdown
-                  _buildDropdown(
-                    selectedTransactionType == 'Transfer' ? 'To Account' : 'Category',
-                    categories,
-                    selectedCategory,
-                        (value) => setState(() => selectedCategory = value),
-                  ),
-
-                  // Subcategory Dropdown (only when available)
-                  if (subcategories.isNotEmpty && selectedTransactionType != 'Transfer')
-                    Column(
-                      children: [
-                        const SizedBox(height: 20),
-                        _buildDropdown(
-                          "Subcategory",
-                          subcategories,
-                          selectedSubcategory,
-                              (value) => setState(() => selectedSubcategory = value),
+                        // Transaction Type Selector
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              _buildTypeSelector("Income", Colors.green),
+                              _buildTypeSelector("Expense", Colors.red),
+                              _buildTypeSelector("Transfer", Colors.blue),
+                            ],
+                          ),
                         ),
+                        const SizedBox(height: 16),
+
+                        // Date Picker
+                        _buildDateField(),
+                        const SizedBox(height: 20),
+
+                        // Note Field with camera icon
+                        TextFormField(
+                          controller: _noteController,
+                          decoration: InputDecoration(
+                            labelText: "Note",
+                            border: const OutlineInputBorder(),
+                            suffixIcon: IconButton(
+                              icon: const Icon(Icons.camera_alt),
+                              onPressed: _showImageSourceDialog,
+                              tooltip: 'Scan receipt',
+                            ),
+                          ),
+                          maxLines: 1,
+                          textInputAction: TextInputAction.next,
+                          onChanged: _predictCategoryFromNote,
+                        ),
+                        const SizedBox(height: 20),
+
+                        // Account Dropdown
+                        _buildDropdown(
+                          selectedTransactionType == 'Transfer' ? 'From Account' : 'Account',
+                          accountTypes,
+                          selectedAccount,
+                              (value) {
+                            setState(() => selectedAccount = value);
+                            if (selectedTransactionType == 'Transfer') {
+                              _fetchCategoriesAndSubcategories();
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 20),
+
+                        // Category/To Account Dropdown
+                        _buildDropdown(
+                          selectedTransactionType == 'Transfer' ? 'To Account' : 'Category',
+                          categories,
+                          selectedCategory,
+                              (value) => setState(() => selectedCategory = value),
+                        ),
+
+                        // Subcategory Dropdown (only when available)
+                        if (subcategories.isNotEmpty && selectedTransactionType != 'Transfer')
+                          Padding(
+                            padding: const EdgeInsets.only(top: 20),
+                            child: _buildDropdown(
+                              "Subcategory",
+                              subcategories,
+                              selectedSubcategory,
+                                  (value) => setState(() => selectedSubcategory = value),
+                            ),
+                          ),
+
+                        // Amount Field
+                        const SizedBox(height: 20),
+                        _buildAmountField(),
+                        const SizedBox(height: 80), // Space for fixed buttons
                       ],
                     ),
-
-                  // Amount Field
-                  const SizedBox(height: 20),
-                  _buildAmountField(),
-
-                  // Action Buttons
-                  _buildActionButtons(),
-                ],
+                  ),
+                ),
               ),
+            ],
+          ),
+
+          // Fixed Action Buttons at Bottom
+          Positioned(
+            bottom: 20,
+            left: 20,
+            right: 20,
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      side: const BorderSide(color: Colors.red),
+                    ),
+                    onPressed: _deleteTransaction,
+                    child: const Text(
+                      "DELETE",
+                      style: TextStyle(color: Colors.red),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    onPressed: _isProcessing ? null : _updateTransaction,
+                    child: _isProcessing
+                        ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(Colors.white),
+                      ),
+                    )
+                        : const Text("SAVE"),
+                  ),
+                ),
+              ],
             ),
           ),
+
+          if (_isProcessing)
+            const Center(child: CircularProgressIndicator()),
         ],
       ),
     );

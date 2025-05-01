@@ -1,18 +1,38 @@
+buildscript {
+    ext.kotlin_version = '1.9.22' // Updated Kotlin version (required for AGP 8+)
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.2.2' // Updated AGP version
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
 allprojects {
     repositories {
         google()
         mavenCentral()
     }
+
+    // Add this block to configure all subprojects (including google_mlkit_commons)
+    project.plugins.withId('com.android.library') {
+        android {
+            namespace = project.hasProperty('namespace')
+                    ? project.property('namespace')
+                    : "default.${project.name}" // Fallback namespace
+            compileSdkVersion 34
+        }
+    }
 }
 
-rootProject.buildDir = "../build"
+rootProject.buildDir = '../build'
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
-}
-subprojects {
-    project.evaluationDependsOn(":app")
+    project.evaluationDependsOn(':app')
 }
 
-tasks.register("clean", Delete) {
+tasks.register('clean', Delete) {
     delete rootProject.buildDir
 }

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 import 'app_refresh_notifier.dart';
 import 'database_helper.dart';
 
@@ -18,6 +21,14 @@ class TransactionPage extends StatefulWidget {
   _TransactionPageState createState() => _TransactionPageState();
 }
 
+class ReceiptData {
+  final String? amount;
+  final String? note;
+  final String? date;
+
+  ReceiptData({this.amount, this.note, this.date});
+}
+
 class _TransactionPageState extends State<TransactionPage> {
   String selectedTransactionType = "Expense";
   DateTime selectedDate = DateTime.now();
@@ -32,6 +43,7 @@ class _TransactionPageState extends State<TransactionPage> {
   final TextEditingController amountController = TextEditingController();
   final TextEditingController noteController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  bool _isProcessing = false;
 
   @override
   void initState() {
@@ -65,9 +77,7 @@ class _TransactionPageState extends State<TransactionPage> {
 
       if (type == 'transfer') {
         final allAccounts = await DatabaseHelper.instance.getAccounts();
-        items = allAccounts.where((account) =>
-        account['name'] != selectedAccount
-        ).toList();
+        items = allAccounts.where((account) => account['name'] != selectedAccount).toList();
       } else {
         items = await DatabaseHelper.instance.getCategories(type);
       }
@@ -118,8 +128,9 @@ class _TransactionPageState extends State<TransactionPage> {
   }
 
   Future<void> _saveTransaction() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate() || _isProcessing) return;
 
+    setState(() => _isProcessing = true);
     final refreshNotifier = Provider.of<AppRefreshNotifier>(context, listen: false);
 
     try {
@@ -135,6 +146,8 @@ class _TransactionPageState extends State<TransactionPage> {
       }
     } catch (e) {
       _showError('Failed to save: ${e.toString()}');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -191,28 +204,11 @@ class _TransactionPageState extends State<TransactionPage> {
             selectedSubcategory = subcategories.contains(predictedSub) ? predictedSub : null;
           });
         }
-
-        print('Auto-predicted: $predictedCat > $predictedSub');
-      } else {
-        print('No prediction found for note: $note');
       }
     } catch (e) {
-      print('Error predicting category: $e');
+      debugPrint('Error predicting category: $e');
     }
   }
-
-  // Future<Map<String, String>?> _mockCategoryPrediction(String note) async {
-  //   try {
-  //     final prediction = await DatabaseHelper.instance.getCategoryPreference(note.trim());
-  //     if (prediction != null) {
-  //       return prediction; // User preference found
-  //     }
-  //   } catch (e) {
-  //     print('Error fetching category preference: $e');
-  //   }
-  //
-  //   return null; // No match found
-  // }
 
   Future<void> _handleTransfer(AppRefreshNotifier refreshNotifier) async {
     if (selectedAccount == null || selectedCategory == null) {
@@ -290,146 +286,209 @@ class _TransactionPageState extends State<TransactionPage> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvoked: (didPop) async {
-        if (didPop) return;
-        final shouldPop = await _confirmDiscardChanges();
-        if (shouldPop && mounted) Navigator.pop(context);
-      },
-      child: Stack(
+  Future<void> _showImageSourceDialog() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          SingleChildScrollView(
-            controller: widget.scrollController,
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Transaction Type Selector
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildTypeSelector("Income", Colors.blue),
-                        _buildTypeSelector("Expense", Colors.red),
-                        _buildTypeSelector("Transfer", Colors.blueGrey),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Date Picker
-                  GestureDetector(
-                    onTap: () => _selectDate(context),
-                    child: AbsorbPointer(
-                      child: TextFormField(
-                        decoration: const InputDecoration(
-                          labelText: "Date",
-                          border: OutlineInputBorder(),
-                          suffixIcon: Icon(Icons.calendar_today),
-                        ),
-                        controller: TextEditingController(
-                          text: DateFormat('dd/MM/yyyy (EEE)').format(selectedDate),
-                        ),
-                        validator: (value) => value?.isEmpty ?? true ? 'Required' : null,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Note Field with prediction for category
-                  TextFormField(
-                    controller: noteController,
-                    decoration: const InputDecoration(
-                      labelText: "Note",
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 1,
-                    textInputAction: TextInputAction.done,
-                    onChanged: (note) {
-                      // Predict category and subcategory from the note
-                      _predictCategoryFromNote(note);
-                    },
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Account Dropdown
-                  _buildDropdown(
-                    selectedTransactionType == 'Transfer' ? 'From Account' : 'Account',
-                    accountTypes,
-                    selectedAccount,
-                        (value) {
-                      setState(() => selectedAccount = value);
-                      if (selectedTransactionType == 'Transfer') {
-                        _loadCategories('transfer');
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Category/To Account Dropdown
-                  _buildDropdown(
-                    selectedTransactionType == 'Transfer' ? 'To Account' : 'Category',
-                    categories,
-                    selectedCategory,
-                        (value) => setState(() => selectedCategory = value),
-                  ),
-
-                  // Conditionally display Subcategory dropdown
-                  if (selectedTransactionType != 'Transfer' && subcategories.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 20),
-                      child: _buildSubcategoryDropdown(), // Use _buildSubcategoryDropdown here
-                    ),
-
-                  // Amount Field
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: amountController,
-                    keyboardType: TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: "Amount",
-                      border: OutlineInputBorder(),
-                      prefixText: '\$ ',
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) return 'Required';
-                      if (double.tryParse(value) == null) return 'Invalid amount';
-                      if (double.parse(value) <= 0) return 'Must be positive';
-                      return null;
-                    },
-                  ),
-
-                  // Add extra space at the bottom for the fixed buttons
-                  const SizedBox(height: 10),
-                ],
-              ),
-            ),
+          ListTile(
+            leading: const Icon(Icons.camera_alt),
+            title: const Text('Take Photo'),
+            onTap: () => Navigator.pop(context, ImageSource.camera),
           ),
-
-          // Fixed Save Button at Bottom
-          Positioned(
-            bottom: 20,
-            left: 20,
-            right: 20,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                minimumSize: const Size(double.infinity, 50),
-              ),
-              onPressed: _saveTransaction,
-              child: const Text(
-                "SAVE TRANSACTION",
-                style: TextStyle(fontSize: 16),
-              ),
-            ),
+          ListTile(
+            leading: const Icon(Icons.photo_library),
+            title: const Text('Choose from Gallery'),
+            onTap: () => Navigator.pop(context, ImageSource.gallery),
           ),
         ],
+      ),
+    );
+
+    if (source != null) {
+      await _scanReceiptAndPredict(source);
+    }
+  }
+
+  Future<void> _scanReceiptAndPredict(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(source: source);
+      if (pickedFile == null) return;
+
+      setState(() => _isProcessing = true);
+
+      // Step 1: Preprocess image (improves OCR accuracy)
+      final inputImage = await _preprocessImage(File(pickedFile.path));
+
+      // Step 2: Text recognition
+      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
+      await textRecognizer.close();
+
+      final fullText = recognizedText.text;
+      debugPrint("Full OCR Output:\n$fullText");
+
+      // Step 3: Extract transaction details
+      final receiptData = _parseReceiptContent(fullText);
+
+      if (receiptData.amount != null) {
+        amountController.text = receiptData.amount!;
+        if (receiptData.note != null) {
+          noteController.text = receiptData.note!;
+          await _predictCategoryFromNote(receiptData.note!);
+        }
+        _showSuccess('Receipt scanned successfully');
+      } else {
+        _showError('Could not find valid amount in receipt');
+      }
+    } catch (e) {
+      _showError('Failed to process receipt: ${e.toString()}');
+      debugPrint('Error scanning receipt: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Future<InputImage> _preprocessImage(File imageFile) async {
+    // In a real app, you might want to add image preprocessing here
+    // For now, we'll just use the original image
+    return InputImage.fromFile(imageFile);
+  }
+
+  ReceiptData _parseReceiptContent(String fullText) {
+    final lines = fullText.split('\n').map((line) => line.trim()).where((line) => line.isNotEmpty).toList();
+    String? amount;
+    String? note;
+    String? date;
+
+    // Amount detection (more precise)
+    amount = _extractBestAmountMatch(lines);
+
+    // Merchant/note detection (smarter)
+    note = _extractMostLikelyMerchant(lines);
+
+    // Optional: Date detection
+    date = _extractPossibleDate(lines);
+
+    return ReceiptData(amount: amount, note: note, date: date);
+  }
+
+  String? _extractBestAmountMatch(List<String> lines) {
+    // Try to find amount in reverse order (usually at bottom)
+    for (var i = lines.length - 1; i >= 0; i--) {
+      final line = lines[i];
+
+      // Skip lines that are too long to be amounts
+      if (line.length > 15) continue;
+
+      // Try different amount patterns
+      final amountPatterns = [
+        // Currency symbols and common formats
+        RegExp(r'[$€£₹¥]\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)'),
+        RegExp(r'(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*(?:USD|EUR|GBP|INR|JPY)'),
+        // Standard number formats
+        RegExp(r'\b(\d+\.\d{2})\b'),
+        RegExp(r'\b(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\b'),
+        // Total lines
+        RegExp(r'(?:total|amount|balance|due|subtotal)\s*[:=]?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)', caseSensitive: false),
+      ];
+
+      for (final pattern in amountPatterns) {
+        final match = pattern.firstMatch(line);
+        if (match != null && match.group(1) != null) {
+          return match.group(1)!.replaceAll(',', '');
+        }
+      }
+    }
+    return null;
+  }
+
+  String? _extractMostLikelyMerchant(List<String> lines) {
+    final excludePatterns = [
+      'receipt', 'invoice', 'vat', 'tax', 'subtotal', 'total', 'amount',
+      'change', 'date', 'time', 'cash', 'card', 'thank', 'visa', 'mastercard',
+      'change', 'qty', 'quantity', 'discount', 'balance', 'due'
+    ];
+
+    // First pass: Look for merchant name at top (first 5 lines or less)
+    final topLines = lines.length > 5 ? lines.sublist(0, 5) : lines;
+    for (final line in topLines) {
+      if (_isLikelyMerchant(line, excludePatterns)) {
+        return line;
+      }
+    }
+
+    // Second pass: Look for any line that looks like a merchant
+    for (final line in lines) {
+      if (_isLikelyMerchant(line, excludePatterns)) {
+        return line;
+      }
+    }
+
+    return null;
+  }
+
+  bool _isLikelyMerchant(String line, List<String> excludePatterns) {
+    final lowerLine = line.toLowerCase();
+
+    // Skip if:
+    // - Too short or too long
+    // - Contains numbers
+    // - Matches exclude patterns
+    // - Looks like a date
+    if (line.length < 3 ||
+        line.length > 30 ||
+        RegExp(r'\d').hasMatch(line) ||
+        excludePatterns.any((pattern) => lowerLine.contains(pattern)) ||
+        _looksLikeDate(line)) {
+      return false;
+    }
+
+    // More checks for merchant-like lines
+    final words = line.split(' ');
+    if (words.length > 5) return false; // Too many words for a merchant name
+
+    // Contains uppercase letters (many merchants have capitalized names)
+    if (line == line.toUpperCase()) return true;
+
+    // Contains common merchant suffixes
+    const suffixes = ['ltd', 'inc', 'co', 'store', 'shop', 'restaurant'];
+    if (suffixes.any((suffix) => lowerLine.endsWith(suffix))) {
+      return true;
+    }
+
+    return true;
+  }
+
+  String? _extractPossibleDate(List<String> lines) {
+    final datePatterns = [
+      RegExp(r'\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b'),
+      RegExp(r'\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4})\b', caseSensitive: false),
+    ];
+
+    for (final line in lines) {
+      for (final pattern in datePatterns) {
+        final match = pattern.firstMatch(line);
+        if (match != null) {
+          return match.group(1);
+        }
+      }
+    }
+    return null;
+  }
+
+  bool _looksLikeDate(String line) {
+    return _extractPossibleDate([line]) != null;
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -456,6 +515,175 @@ class _TransactionPageState extends State<TransactionPage> {
         ],
       ),
     ) ?? false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
+        final shouldPop = await _confirmDiscardChanges();
+        if (shouldPop && mounted) Navigator.pop(context);
+      },
+      child: Stack(
+        children: [
+          Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: widget.scrollController,
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Transaction Type Selector
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              _buildTypeSelector("Income", Colors.green),
+                              _buildTypeSelector("Expense", Colors.red),
+                              _buildTypeSelector("Transfer", Colors.blue),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Date Picker
+                        GestureDetector(
+                          onTap: () => _selectDate(context),
+                          child: AbsorbPointer(
+                            child: TextFormField(
+                              decoration: const InputDecoration(
+                                labelText: "Date",
+                                border: OutlineInputBorder(),
+                                suffixIcon: Icon(Icons.calendar_today),
+                              ),
+                              controller: TextEditingController(
+                                text: DateFormat('dd/MM/yyyy (EEE)').format(selectedDate),
+                              ),
+                              validator: (value) => value?.isEmpty ?? true ? 'Required' : null,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+
+                        // Note Field with prediction for category
+                        TextFormField(
+                          controller: noteController,
+                          decoration: InputDecoration(
+                            labelText: "Note",
+                            border: const OutlineInputBorder(),
+                            suffixIcon: IconButton(
+                              icon: const Icon(Icons.camera_alt),
+                              onPressed: _showImageSourceDialog,
+                              tooltip: 'Scan receipt',
+                            ),
+                          ),
+                          maxLines: 1,
+                          textInputAction: TextInputAction.next,
+                          onChanged: _predictCategoryFromNote,
+                        ),
+                        const SizedBox(height: 20),
+
+                        // Account Dropdown
+                        _buildDropdown(
+                          selectedTransactionType == 'Transfer' ? 'From Account' : 'Account',
+                          accountTypes,
+                          selectedAccount,
+                              (value) {
+                            setState(() => selectedAccount = value);
+                            if (selectedTransactionType == 'Transfer') {
+                              _loadCategories('transfer');
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 20),
+
+                        // Category/To Account Dropdown
+                        _buildDropdown(
+                          selectedTransactionType == 'Transfer' ? 'To Account' : 'Category',
+                          categories,
+                          selectedCategory,
+                              (value) => setState(() => selectedCategory = value),
+                        ),
+
+                        // Conditionally display Subcategory dropdown
+                        if (selectedTransactionType != 'Transfer' && subcategories.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 20),
+                            child: _buildDropdown(
+                              "Subcategory",
+                              subcategories,
+                              selectedSubcategory,
+                                  (value) => setState(() => selectedSubcategory = value),
+                            ),
+                          ),
+
+                        // Amount Field
+                        const SizedBox(height: 20),
+                        TextFormField(
+                          controller: amountController,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(
+                            labelText: "Amount",
+                            border: OutlineInputBorder(),
+                            prefixText: '\$ ',
+                          ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) return 'Required';
+                            if (double.tryParse(value) == null) return 'Invalid amount';
+                            if (double.parse(value) <= 0) return 'Must be positive';
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 80), // Space for fixed button
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          // Fixed Save Button at Bottom
+          Positioned(
+            bottom: 20,
+            left: 20,
+            right: 20,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              onPressed: _isProcessing ? null : _saveTransaction,
+              child: _isProcessing
+                  ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(Colors.white),
+                ),
+              )
+                  : const Text(
+                "SAVE TRANSACTION",
+                style: TextStyle(fontSize: 16),
+              ),
+            ),
+          ),
+
+          if (_isProcessing)
+            const Center(child: CircularProgressIndicator()),
+        ],
+      ),
+    );
   }
 
   Widget _buildTypeSelector(String type, Color activeColor) {
@@ -496,21 +724,13 @@ class _TransactionPageState extends State<TransactionPage> {
       String? value,
       ValueChanged<String?> onChanged,
       ) {
-    // Remove duplicates from the list (if any)
-    List<String> uniqueItems = items.toSet().toList();
-
-    // Ensure the value is in the list or fallback to the first item if it's null
-    if (value != null && !uniqueItems.contains(value)) {
-      value = uniqueItems.isNotEmpty ? uniqueItems.first : null;
-    }
-
     return DropdownButtonFormField<String>(
-      value: value ?? (uniqueItems.isNotEmpty ? uniqueItems.first : null), // Fallback to first item if null
+      value: value ?? (items.isNotEmpty ? items.first : null),
       decoration: InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
       ),
-      items: uniqueItems.map((item) {
+      items: items.map((item) {
         return DropdownMenuItem<String>(
           value: item,
           child: Text(item),
@@ -524,33 +744,8 @@ class _TransactionPageState extends State<TransactionPage> {
           return;
         }
         onChanged(newValue);
-
-        if (selectedTransactionType != 'Transfer' && label == 'Category' && newValue != null) {
-          // If it's a category and it's not Transfer, load subcategories
-          _loadSubcategories(newValue).then((_) {
-            // Ensure the UI updates after subcategories are loaded
-            if (mounted) setState(() {});
-          }).catchError((e) {
-            _showError('Failed to load subcategories: ${e.toString()}');
-          });
-        }
       },
       validator: (value) => value == null ? 'Please select $label' : null,
-    );
-  }
-
-// Subcategory Dropdown with null check
-  Widget _buildSubcategoryDropdown() {
-    if (subcategories.isEmpty || selectedCategory == null) {
-      // If no subcategories available, don't display the subcategory dropdown
-      return Container();
-    }
-
-    return _buildDropdown(
-      "Subcategory",
-      subcategories,
-      selectedSubcategory,
-          (value) => setState(() => selectedSubcategory = value),
     );
   }
 }
