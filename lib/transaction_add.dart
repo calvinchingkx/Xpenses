@@ -142,6 +142,13 @@ class _TransactionPageState extends State<TransactionPage> {
     final accountId = await DatabaseHelper.instance.getAccountIdByName(selectedAccount!);
     final amount = double.parse(amountController.text);
 
+    final categoryPreference = await DatabaseHelper.instance.getCategoryPreference(noteController.text);
+
+    if (categoryPreference != null) {
+      selectedCategory = categoryPreference['category'];
+      selectedSubcategory = categoryPreference['subcategory'];
+    }
+
     final transaction = {
       'type': selectedTransactionType,
       'date': _formatDate(selectedDate),
@@ -152,12 +159,60 @@ class _TransactionPageState extends State<TransactionPage> {
       'note': noteController.text,
     };
 
+    await DatabaseHelper.instance.saveCategoryPreference(
+      noteController.text.trim().toLowerCase(),
+      selectedCategory ?? '',
+      selectedSubcategory ?? '',
+    );
+
     await DatabaseHelper.instance.insertTransaction(transaction);
     await _updateAccountBalance(accountId, amount, selectedTransactionType);
 
     refreshNotifier.refreshAccounts();
     refreshNotifier.refreshTransactions();
   }
+
+  Future<void> _predictCategoryFromNote(String note) async {
+    final normalizedNote = note.trim().toLowerCase();
+
+    try {
+      final predictedCategory = await DatabaseHelper.instance.getCategoryPreference(normalizedNote);
+
+      if (predictedCategory != null && mounted) {
+        final predictedCat = predictedCategory['category']!;
+        final predictedSub = predictedCategory['subcategory'];
+
+        // Load subcategories FIRST
+        await _loadSubcategories(predictedCat);
+
+        if (mounted) {
+          setState(() {
+            selectedCategory = predictedCat;
+            selectedSubcategory = subcategories.contains(predictedSub) ? predictedSub : null;
+          });
+        }
+
+        print('Auto-predicted: $predictedCat > $predictedSub');
+      } else {
+        print('No prediction found for note: $note');
+      }
+    } catch (e) {
+      print('Error predicting category: $e');
+    }
+  }
+
+  // Future<Map<String, String>?> _mockCategoryPrediction(String note) async {
+  //   try {
+  //     final prediction = await DatabaseHelper.instance.getCategoryPreference(note.trim());
+  //     if (prediction != null) {
+  //       return prediction; // User preference found
+  //     }
+  //   } catch (e) {
+  //     print('Error fetching category preference: $e');
+  //   }
+  //
+  //   return null; // No match found
+  // }
 
   Future<void> _handleTransfer(AppRefreshNotifier refreshNotifier) async {
     if (selectedAccount == null || selectedCategory == null) {
@@ -287,6 +342,22 @@ class _TransactionPageState extends State<TransactionPage> {
                   ),
                   const SizedBox(height: 20),
 
+                  // Note Field with prediction for category
+                  TextFormField(
+                    controller: noteController,
+                    decoration: const InputDecoration(
+                      labelText: "Note",
+                      border: OutlineInputBorder(),
+                    ),
+                    maxLines: 1,
+                    textInputAction: TextInputAction.done,
+                    onChanged: (note) {
+                      // Predict category and subcategory from the note
+                      _predictCategoryFromNote(note);
+                    },
+                  ),
+                  const SizedBox(height: 20),
+
                   // Account Dropdown
                   _buildDropdown(
                     selectedTransactionType == 'Transfer' ? 'From Account' : 'Account',
@@ -309,18 +380,11 @@ class _TransactionPageState extends State<TransactionPage> {
                         (value) => setState(() => selectedCategory = value),
                   ),
 
-                  // Subcategory Dropdown (only when available)
-                  if (subcategories.isNotEmpty && selectedTransactionType != 'Transfer')
-                    Column(
-                      children: [
-                        const SizedBox(height: 20),
-                        _buildDropdown(
-                          "Subcategory",
-                          subcategories,
-                          selectedSubcategory,
-                              (value) => setState(() => selectedSubcategory = value),
-                        ),
-                      ],
+                  // Conditionally display Subcategory dropdown
+                  if (selectedTransactionType != 'Transfer' && subcategories.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 20),
+                      child: _buildSubcategoryDropdown(), // Use _buildSubcategoryDropdown here
                     ),
 
                   // Amount Field
@@ -341,20 +405,8 @@ class _TransactionPageState extends State<TransactionPage> {
                     },
                   ),
 
-                  // Note Field
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: noteController,
-                    decoration: const InputDecoration(
-                      labelText: "Note",
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 1,
-                    textInputAction: TextInputAction.done,
-                  ),
-
                   // Add extra space at the bottom for the fixed buttons
-                  const SizedBox(height: 60),
+                  const SizedBox(height: 10),
                 ],
               ),
             ),
@@ -444,27 +496,39 @@ class _TransactionPageState extends State<TransactionPage> {
       String? value,
       ValueChanged<String?> onChanged,
       ) {
+    // Remove duplicates from the list (if any)
+    List<String> uniqueItems = items.toSet().toList();
+
+    // Ensure the value is in the list or fallback to the first item if it's null
+    if (value != null && !uniqueItems.contains(value)) {
+      value = uniqueItems.isNotEmpty ? uniqueItems.first : null;
+    }
+
     return DropdownButtonFormField<String>(
-      value: value,
+      value: value ?? (uniqueItems.isNotEmpty ? uniqueItems.first : null), // Fallback to first item if null
       decoration: InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
       ),
-      items: items.map((item) => DropdownMenuItem(
-        value: item,
-        child: Text(item),
-      )).toList(),
-      onChanged: (newValue) {
+      items: uniqueItems.map((item) {
+        return DropdownMenuItem<String>(
+          value: item,
+          child: Text(item),
+        );
+      }).toList(),
+      onChanged: (String? newValue) {
         if (selectedTransactionType == 'Transfer' &&
             label == 'Account' &&
             newValue == selectedCategory) {
-          _showError('Cannot transfer to same account');
+          _showError('Cannot transfer to the same account');
           return;
         }
         onChanged(newValue);
+
         if (selectedTransactionType != 'Transfer' && label == 'Category' && newValue != null) {
+          // If it's a category and it's not Transfer, load subcategories
           _loadSubcategories(newValue).then((_) {
-            // This ensures the UI updates after subcategories are loaded
+            // Ensure the UI updates after subcategories are loaded
             if (mounted) setState(() {});
           }).catchError((e) {
             _showError('Failed to load subcategories: ${e.toString()}');
@@ -472,6 +536,21 @@ class _TransactionPageState extends State<TransactionPage> {
         }
       },
       validator: (value) => value == null ? 'Please select $label' : null,
+    );
+  }
+
+// Subcategory Dropdown with null check
+  Widget _buildSubcategoryDropdown() {
+    if (subcategories.isEmpty || selectedCategory == null) {
+      // If no subcategories available, don't display the subcategory dropdown
+      return Container();
+    }
+
+    return _buildDropdown(
+      "Subcategory",
+      subcategories,
+      selectedSubcategory,
+          (value) => setState(() => selectedSubcategory = value),
     );
   }
 }

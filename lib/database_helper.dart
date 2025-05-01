@@ -100,6 +100,15 @@ class DatabaseHelper {
       account_id INTEGER,
       FOREIGN KEY(account_id) REFERENCES accounts(id)
     )''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS category_preferences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        merchant TEXT NOT NULL,
+        category TEXT,
+        subcategory TEXT
+      );
+    ''');
   }
 
   //Account Operations
@@ -892,4 +901,40 @@ class DatabaseHelper {
     ORDER BY t1.date DESC
   ''');
   }
+
+  Future<void> saveCategoryPreference(String merchant, String category, String subcategory) async {
+    final db = await database;
+    final normalizedMerchant = merchant.trim().toLowerCase();
+
+    await db.insert(
+      'category_preferences',
+      {
+        'merchant': normalizedMerchant,
+        'category': category,
+        'subcategory': subcategory,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Map<String, String>?> getCategoryPreference(String merchant) async {
+    final db = await database;
+    final normalizedMerchant = merchant.trim().toLowerCase();
+
+    final result = await db.query(
+      'category_preferences',
+      where: 'merchant = ?',
+      whereArgs: [normalizedMerchant],
+    );
+
+    if (result.isNotEmpty) {
+      return {
+        'category': result.first['category'] as String,
+        'subcategory': result.first['subcategory'] as String,
+      };
+    }
+    return null;
+  }
+
+
 }

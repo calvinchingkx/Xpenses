@@ -544,6 +544,10 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
                   _buildDateField(),
                   const SizedBox(height: 20),
 
+                  // Note Field
+                  _buildNoteField(),
+                  const SizedBox(height: 20),
+
                   // Account Dropdown
                   _buildDropdown(
                     selectedTransactionType == 'Transfer' ? 'From Account' : 'Account',
@@ -583,10 +587,6 @@ class _TransactionUpdatePageState extends State<TransactionUpdatePage> {
                   // Amount Field
                   const SizedBox(height: 20),
                   _buildAmountField(),
-
-                  // Note Field
-                  const SizedBox(height: 20),
-                  _buildNoteField(),
 
                   // Action Buttons
                   _buildActionButtons(),
