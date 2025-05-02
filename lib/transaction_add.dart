@@ -98,6 +98,8 @@ class _TransactionPageState extends State<TransactionPage> {
   }
 
   Future<void> _loadSubcategories(String categoryName) async {
+    if (selectedTransactionType == 'Transfer') return;
+
     try {
       final categoriesFromDb = await DatabaseHelper.instance
           .getCategories(selectedTransactionType.toLowerCase());
@@ -106,14 +108,22 @@ class _TransactionPageState extends State<TransactionPage> {
         orElse: () => {'id': -1},
       );
 
+      List<String> newSubcategories = [];
+      String? newSelectedSubcategory = null;
+
       if (category['id'] != -1) {
         final subcategoriesFromDb = await DatabaseHelper.instance
             .getSubcategoriesByCategoryId(category['id']);
+        newSubcategories = subcategoriesFromDb.isNotEmpty
+            ? subcategoriesFromDb.map((e) => e['name'] as String).toList()
+            : [];
+        newSelectedSubcategory = newSubcategories.isNotEmpty ? newSubcategories.first : null;
+      }
+
+      if (mounted) {
         setState(() {
-          subcategories = subcategoriesFromDb.isNotEmpty
-              ? subcategoriesFromDb.map((e) => e['name'] as String).toList()
-              : [];
-          selectedSubcategory = subcategories.isNotEmpty ? subcategories.first : null;
+          subcategories = newSubcategories;
+          selectedSubcategory = newSelectedSubcategory;
         });
       }
     } catch (e) {
@@ -609,7 +619,12 @@ class _TransactionPageState extends State<TransactionPage> {
                           selectedTransactionType == 'Transfer' ? 'To Account' : 'Category',
                           categories,
                           selectedCategory,
-                              (value) => setState(() => selectedCategory = value),
+                              (value) async {
+                            setState(() => selectedCategory = value);
+                            if (selectedTransactionType != 'Transfer' && value != null) {
+                              await _loadSubcategories(value);
+                            }
+                          },
                         ),
 
                         // Conditionally display Subcategory dropdown
