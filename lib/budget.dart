@@ -3,6 +3,7 @@ import 'package:pull_to_refresh/pull_to_refresh.dart';
 import 'package:provider/provider.dart';
 import 'app_refresh_notifier.dart';
 import 'database_helper.dart';
+import 'category_transaction_screen.dart';
 
 class BudgetScreen extends StatefulWidget {
   @override
@@ -364,56 +365,110 @@ class _BudgetScreenState extends State<BudgetScreen> {
         final remaining = limit - spent;
         final percentage = limit > 0 ? (spent / limit) : 0;
 
-        // Show overspend alert if needed
-        if (remaining < 0) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _showOverspendAlert(budget['category'], remaining.abs());
-          });
-        }
-
         return Card(
           margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: ListTile(
-            title: Text(budget['category']?.toString() ?? 'Uncategorized'),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Limit: \$${limit.toStringAsFixed(2)}'),
-                    Text('Spent: \$${spent.toStringAsFixed(2)}'),
-                  ],
-                ),
-                Text(
-                  'Remaining: \$${remaining.toStringAsFixed(2)}',
-                  style: TextStyle(
-                    color: remaining >= 0 ? Colors.green[700] : Colors.red,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: (percentage > 1 ? 1 : percentage).toDouble(),
-                    minHeight: 6,
-                    backgroundColor: Colors.grey[200],
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      percentage > 0.8
-                          ? percentage > 1
-                          ? Colors.red[700]!
-                          : Colors.orange[700]!
-                          : Colors.green[700]!,
+          child: InkWell(
+            onTap: () => _navigateToCategoryTransactions(budget),
+            onLongPress: () => _showBudgetOptions(budget),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    budget['category']?.toString() ?? 'Uncategorized',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Limit: \$${limit.toStringAsFixed(2)}'),
+                      Text('Spent: \$${spent.toStringAsFixed(2)}'),
+                    ],
+                  ),
+                  Text(
+                    'Remaining: \$${remaining.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      color: remaining >= 0 ? Colors.green[700] : Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: (percentage > 1 ? 1 : percentage).toDouble(),
+                      minHeight: 6,
+                      backgroundColor: Colors.grey[200],
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        percentage > 0.8
+                            ? percentage > 1
+                            ? Colors.red[700]!
+                            : Colors.orange[700]!
+                            : Colors.green[700]!,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            onTap: () => _showBudgetDialog(budget),
           ),
         );
       },
+    );
+  }
+
+  void _navigateToCategoryTransactions(Map<String, dynamic> budget) {
+    final currentDate = DateTime.now();
+    final month = _selectedMonth != null
+        ? int.parse(_selectedMonth!.split('-')[1])
+        : currentDate.month;
+    final year = _selectedMonth != null
+        ? int.parse(_selectedMonth!.split('-')[0])
+        : currentDate.year;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CategoryTransactionScreen(
+          category: budget['category'] as String,
+          month: month,
+          year: year,
+        ),
+      ),
+    );
+  }
+
+  void _showBudgetOptions(Map<String, dynamic> budget) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('Edit Budget'),
+              onTap: () {
+                Navigator.pop(context);
+                _showBudgetDialog(budget);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: const Text('Delete Budget', style: TextStyle(color: Colors.red)),
+              onTap: () async {
+                Navigator.pop(context);
+                await _confirmDeleteBudget(budget['id']);
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 

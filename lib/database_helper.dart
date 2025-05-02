@@ -249,6 +249,75 @@ class DatabaseHelper {
     return balance;
   }
 
+  Future<List<Map<String, dynamic>>> getAccountTransactionsForMonth(
+      int accountId,
+      int month,
+      int year,
+      ) async {
+    final db = await database;
+    final monthStr = month.toString().padLeft(2, '0');
+    final yearStr = year.toString();
+
+    return await db.rawQuery('''
+    SELECT 
+      t.id, 
+      t.type, 
+      t.date, 
+      CASE
+        WHEN t.type = 'Transfer' AND t.from_account_id = ? THEN a_to.name
+        WHEN t.type = 'Transfer' AND t.to_account_id = ? THEN a_from.name
+        ELSE a.name
+      END AS account,
+      t.category,
+      t.subcategory, 
+      t.amount, 
+      t.note,
+      a_from.name AS from_account,
+      a_to.name AS to_account
+    FROM transactions t
+    LEFT JOIN accounts a ON t.account_id = a.id
+    LEFT JOIN accounts a_from ON t.from_account_id = a_from.id
+    LEFT JOIN accounts a_to ON t.to_account_id = a_to.id
+    WHERE (t.account_id = ? OR t.from_account_id = ? OR t.to_account_id = ?)
+      AND substr(t.date, 4, 2) = ? 
+      AND substr(t.date, 7, 4) = ?
+    ORDER BY t.date DESC
+  ''', [
+      accountId, accountId, // For transfer cases
+      accountId, accountId, accountId, // For all transaction types
+      monthStr, yearStr
+    ]);
+  }
+
+  Future<double> getAccountTotalByTypeForMonth(
+      int accountId,
+      String type,
+      int month,
+      int year,
+      ) async {
+    final db = await database;
+    final monthStr = month.toString().padLeft(2, '0');
+    final yearStr = year.toString();
+
+    final result = await db.rawQuery('''
+    SELECT SUM(amount) as total 
+    FROM transactions 
+    WHERE (account_id = ? ${type == 'Transfer' ? 'OR from_account_id = ? OR to_account_id = ?' : ''})
+      AND type = ? 
+      AND substr(date, 4, 2) = ? 
+      AND substr(date, 7, 4) = ?
+  ''', [
+      accountId,
+      if (type == 'Transfer') accountId,
+      if (type == 'Transfer') accountId,
+      type,
+      monthStr,
+      yearStr
+    ]);
+
+    return (result.first['total'] as num?)?.toDouble() ?? 0.0;
+  }
+
   Future<int> forceUpdateAccountBalance(int accountId, double newBalance) async {
     final db = await database;
     return await db.rawUpdate(
@@ -678,6 +747,54 @@ class DatabaseHelper {
       spentAmounts[row['category'] as String] = (row['spent'] as num).toDouble();
     }
     return spentAmounts;
+  }
+
+  Future<List<Map<String, dynamic>>> getTransactionsForCategory(
+      String category,
+      int month,
+      int year,
+      ) async {
+    final db = await database;
+    final monthStr = month.toString().padLeft(2, '0');
+    final yearStr = year.toString();
+
+    return await db.rawQuery('''
+    SELECT 
+      t.*,
+      a.name as account_name
+    FROM transactions t
+    LEFT JOIN accounts a ON t.account_id = a.id
+    WHERE t.category = ?
+      AND substr(t.date, 4, 2) = ?
+      AND substr(t.date, 7, 4) = ?
+      AND t.type = 'Expense'
+    ORDER BY t.date DESC
+  ''', [category, monthStr, yearStr]);
+  }
+
+  Future<List<Map<String, dynamic>>> getTransactionsForCategoryWithSubcategory(
+      String category,
+      String subcategory,
+      int month,
+      int year,
+      ) async {
+    final db = await database;
+    final monthStr = month.toString().padLeft(2, '0');
+    final yearStr = year.toString();
+
+    return await db.rawQuery('''
+    SELECT 
+      t.*,
+      a.name as account_name
+    FROM transactions t
+    LEFT JOIN accounts a ON t.account_id = a.id
+    WHERE t.category = ?
+      AND t.subcategory = ?
+      AND substr(t.date, 4, 2) = ?
+      AND substr(t.date, 7, 4) = ?
+      AND t.type = 'Expense'
+    ORDER BY t.date DESC
+  ''', [category, subcategory, monthStr, yearStr]);
   }
 
   Future<int> addCategory(String name, String type) async {

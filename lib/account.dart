@@ -3,6 +3,7 @@ import 'package:pull_to_refresh/pull_to_refresh.dart';
 import 'package:provider/provider.dart';
 import 'app_refresh_notifier.dart';
 import 'database_helper.dart';
+import 'account_transaction_screen.dart';
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({Key? key}) : super(key: key);
@@ -119,6 +120,18 @@ class _AccountScreenState extends State<AccountScreen> {
         _showError('Refresh failed: ${e.toString()}');
       }
     }
+  }
+
+  void _navigateToAccountTransactions(Map<String, dynamic> account) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AccountTransactionScreen(
+          accountId: account['id'] as int,
+          accountName: account['name']?.toString() ?? 'Account',
+        ),
+      ),
+    );
   }
 
   Future<void> _saveCustomOrder() async {
@@ -454,27 +467,13 @@ class _AccountScreenState extends State<AccountScreen> {
     final isProcessing = _isLoading &&
         (_isDeleting || _accounts.indexWhere((a) => a['id'] == account['id']) != -1);
 
-    return Dismissible(
+    return Card(
       key: Key('account_${account['id']}'),
-      direction: DismissDirection.endToStart,
-      confirmDismiss: (direction) async {
-        final shouldDelete = await _confirmAccountDeletion();
-        if (shouldDelete ?? false) {
-          await _deleteAccount(account['id'] as int);
-          return true;
-        }
-        return false;
-      },
-      background: Container(
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        color: Colors.red,
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        child: const Icon(Icons.delete, color: Colors.white),
-      ),
-      child: Card(
-        margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-        elevation: 2,
+      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      elevation: 2,
+      child: InkWell(
+        onTap: isProcessing ? null : () => _navigateToAccountTransactions(account),
+        onLongPress: _isReorderable ? null : () => _showAccountOptions(account),
         child: Stack(
           children: [
             ListTile(
@@ -500,8 +499,6 @@ class _AccountScreenState extends State<AccountScreen> {
                   fontSize: 16,
                 ),
               ),
-              onTap: isProcessing ? null : () => _addOrEditAccount(account: account),
-              onLongPress: _isReorderable ? null : () => setState(() => _isReorderable = true),
             ),
             if (isProcessing)
               Positioned.fill(
@@ -510,6 +507,38 @@ class _AccountScreenState extends State<AccountScreen> {
                   child: const Center(child: CircularProgressIndicator()),
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAccountOptions(Map<String, dynamic> account) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('Edit Account'),
+              onTap: () {
+                Navigator.pop(context);
+                _addOrEditAccount(account: account);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: const Text('Delete Account', style: TextStyle(color: Colors.red)),
+              onTap: () async {
+                Navigator.pop(context);
+                final shouldDelete = await _confirmAccountDeletion();
+                if (shouldDelete ?? false) {
+                  await _deleteAccount(account['id'] as int);
+                }
+              },
+            ),
           ],
         ),
       ),
