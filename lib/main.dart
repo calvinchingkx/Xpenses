@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'app_refresh_notifier.dart';
-import 'budget.dart'; // Budget page
-import 'account.dart'; // Account Management page
-import 'report.dart'; // Report page
-import 'setting.dart'; // Setting page
-import 'dashboard_screen.dart'; // Dashboard page
+import 'budget.dart';
+import 'account.dart';
+import 'report.dart';
+import 'setting.dart';
+import 'dashboard_screen.dart';
+import 'theme_provider.dart'; // Import your ThemeProvider
 
 void main() {
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => AppRefreshNotifier(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => AppRefreshNotifier()),
+        ChangeNotifierProvider(create: (context) => ThemeProvider()),
+      ],
       child: const MyApp(),
     ),
   );
@@ -21,13 +25,29 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Xpenses',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
-      home: const MainScreen(),
+    return Consumer<ThemeProvider>(
+      builder: (context, themeProvider, child) {
+        return MaterialApp(
+          title: 'Xpenses',
+          theme: ThemeData.light().copyWith(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: Colors.deepPurple,
+              brightness: Brightness.light,
+            ),
+            useMaterial3: true,
+          ),
+          darkTheme: ThemeData.dark().copyWith(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: Colors.deepPurple,
+              brightness: Brightness.dark,
+            ),
+            useMaterial3: true,
+          ),
+          themeMode: themeProvider.themeMode,
+          home: const MainScreen(),
+          debugShowCheckedModeBanner: false,
+        );
+      },
     );
   }
 }
@@ -42,7 +62,6 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
-  // List of page builders to lazy load pages when needed
   final List<Widget> _pages = [
     DashboardScreen(),
     ReportScreen(),
@@ -51,7 +70,6 @@ class _MainScreenState extends State<MainScreen> {
     SettingsScreen(),
   ];
 
-  // Navigation bar items
   static const List<BottomNavigationBarItem> _navBarItems = [
     BottomNavigationBarItem(
       icon: Icon(Icons.dashboard),
@@ -75,7 +93,6 @@ class _MainScreenState extends State<MainScreen> {
     ),
   ];
 
-  // Page titles corresponding to each tab
   static const List<String> _pageTitles = [
     'Dashboard',
     'Reports',
@@ -106,30 +123,11 @@ class _MainScreenState extends State<MainScreen> {
           currentIndex: _selectedIndex,
           onTap: _onItemTapped,
           type: BottomNavigationBarType.fixed,
-          selectedItemColor: Colors.blueGrey,
+          selectedItemColor: Theme.of(context).colorScheme.primary,
           unselectedItemColor: Colors.grey,
           items: _navBarItems,
         ),
       ),
     );
   }
-/*
-  // Method to return page title based on selected index
-  String _getPageTitle(int index) {
-    switch (index) {
-      case 0:
-        return 'Dashboard';
-      case 1:
-        return 'Report';
-      case 2:
-        return 'Account';
-      case 3:
-        return 'Budget';
-      case 4:
-        return 'Settings';
-      default:
-        return 'Xpenses';
-    }
-  }
-   */
 }

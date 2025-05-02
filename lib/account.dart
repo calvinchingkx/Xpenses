@@ -495,7 +495,7 @@ class _AccountScreenState extends State<AccountScreen> {
               trailing: Text(
                 '\$${balance.toStringAsFixed(2)}',
                 style: TextStyle(
-                  color: isNegative ? Colors.red : Colors.green,
+                  color: isNegative ? Colors.red : Colors.green[700],
                   fontWeight: FontWeight.bold,
                   fontSize: 16,
                 ),

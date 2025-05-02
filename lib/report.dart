@@ -226,7 +226,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
                                   style: TextStyle(fontSize: 14, color: Colors.grey),
                                 ),
                                 Text(
-                                  '\$${(_totalIncome + _totalExpenses).toStringAsFixed(2)}',
+                                  '\$${(_totalIncome - _totalExpenses).toStringAsFixed(2)}',
                                   style: TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
@@ -242,9 +242,9 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          _buildLegendItem(Colors.green, 'Income'),
+                          _buildLegendItem(Colors.green[700]!, 'Income'),
                           SizedBox(width: 20),
-                          _buildLegendItem(Colors.red, 'Expenses'),
+                          _buildLegendItem(Colors.red[700]!, 'Expenses'),
                         ],
                       ),
                     ],
@@ -269,7 +269,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
   }
 
   Widget _buildIncomeExpensePieChart(double income, double expense) {
-    final total = income - expense;
+    final total = income + expense;
     if (total == 0) return Center(child: Text('No data available', style: TextStyle(color: Colors.grey)));
 
     final incomePercentage = (income / total * 100).toStringAsFixed(1);
@@ -745,7 +745,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: isIncome ? Colors.green : Colors.red,
+                  color: isIncome ? Colors.green[700] : Colors.red[700],
                 ),
               ),
             ],
@@ -952,7 +952,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
                   );
                 }).toList(),
                 isCurved: false,
-                color: Colors.green,
+                color: Colors.green[700],
                 barWidth: 3,
                 belowBarData: BarAreaData(show: false),
                 dotData: FlDotData(show: true),
@@ -966,7 +966,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
                   );
                 }).toList(),
                 isCurved: false,
-                color: Colors.red,
+                color: Colors.red[700],
                 barWidth: 3,
                 belowBarData: BarAreaData(show: false),
                 dotData: FlDotData(show: true),
@@ -1011,8 +1011,8 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
               ),
             ),
             SizedBox(height: 12),
-            ..._transactions.take(5).map((t) => _buildTransactionTile(t)).toList(),
-            if (_transactions.length > 5)
+            ..._transactions.take(3).map((t) => _buildTransactionTile(t)).toList(),
+            if (_transactions.length > 3)
               Center(
                 child: TextButton(
                   onPressed: () {
@@ -1071,7 +1071,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
           ),
           child: Icon(
             isIncome ? Icons.arrow_upward : Icons.arrow_downward,
-            color: isIncome ? Colors.green : Colors.red,
+            color: isIncome ? Colors.green[700] : Colors.red[700],
             size: 20,
           ),
         ),
@@ -1092,7 +1092,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
             Text(
               '\$${amount.toStringAsFixed(2)}',
               style: TextStyle(
-                color: isIncome ? Colors.green : Colors.red,
+                color: isIncome ? Colors.green[700] : Colors.red[700],
                 fontWeight: FontWeight.bold,
               ),
             ),

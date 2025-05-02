@@ -44,11 +44,24 @@ class _BudgetScreenState extends State<BudgetScreen> {
         await _createNewMonthBudgets(lastBudget, yearMonth);
       }
 
+      // Get budgets and categories
       final budgets = await DatabaseHelper().getBudgets(yearMonth: yearMonth);
       final categories = await DatabaseHelper().getCategories('expense');
 
+      // Get actual spent amounts from transactions
+      final spentAmounts = await DatabaseHelper().getSpentAmountsByCategory(yearMonth);
+
+      // Update budgets with actual spent amounts
+      final updatedBudgets = budgets.map((budget) {
+        final category = budget['category'] as String;
+        return {
+          ...budget,
+          'current_month_spent': spentAmounts[category] ?? 0.0,
+        };
+      }).toList();
+
       setState(() {
-        _budgets = _sortBudgets(budgets.where((b) =>
+        _budgets = _sortBudgets(updatedBudgets.where((b) =>
         b['id'] != null &&
             b['budget_limit'] != null &&
             b['current_month_spent'] != null &&
@@ -204,7 +217,16 @@ class _BudgetScreenState extends State<BudgetScreen> {
               _buildSortMenu(),
             ],
           ),
-          body: _buildRefreshableList(),
+          body: Column(
+            children: [
+              // Always show summary at top
+              _buildBudgetSummaryCard(),
+              // Expanded makes the list take remaining space
+              Expanded(
+                child: _buildRefreshableList(),
+              ),
+            ],
+          ),
           floatingActionButton: FloatingActionButton(
             onPressed: () => _showBudgetDialog(null),
             child: const Icon(Icons.add),
@@ -331,72 +353,67 @@ class _BudgetScreenState extends State<BudgetScreen> {
       );
     }
 
-    return ListView(
+    return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(bottom: 80),
-      children: [
-        _buildBudgetSummaryCard(),
-        ..._budgets.map((budget) {
-          final limit = (budget['budget_limit'] as num).toDouble();
-          final spent = (budget['current_month_spent'] as num).toDouble();
-          final remaining = limit - spent;
-          final percentage = limit > 0 ? (spent / limit) : 0;
+      itemCount: _budgets.length,
+      itemBuilder: (context, index) {
+        final budget = _budgets[index];
+        final limit = (budget['budget_limit'] as num).toDouble();
+        final spent = (budget['current_month_spent'] as num).toDouble();
+        final remaining = limit - spent;
+        final percentage = limit > 0 ? (spent / limit) : 0;
 
-          // Show overspend alert if needed
-          if (remaining < 0) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _showOverspendAlert(budget['category'], remaining.abs());
-            });
-          }
+        // Show overspend alert if needed
+        if (remaining < 0) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showOverspendAlert(budget['category'], remaining.abs());
+          });
+        }
 
-          return Card(
-            margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: ListTile(
-              title: Text(budget['category']?.toString() ?? 'Uncategorized'),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('Limit: \$${limit.toStringAsFixed(2)}'),
-                      Text('Spent: \$${spent.toStringAsFixed(2)}'),
-                    ],
+        return Card(
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: ListTile(
+            title: Text(budget['category']?.toString() ?? 'Uncategorized'),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Limit: \$${limit.toStringAsFixed(2)}'),
+                    Text('Spent: \$${spent.toStringAsFixed(2)}'),
+                  ],
+                ),
+                Text(
+                  'Remaining: \$${remaining.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    color: remaining >= 0 ? Colors.green[700] : Colors.red,
+                    fontWeight: FontWeight.bold,
                   ),
-                  Text(
-                    'Remaining: \$${remaining.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      color: remaining >= 0 ? Colors.green : Colors.red,
-                      fontWeight: FontWeight.bold,
+                ),
+                const SizedBox(height: 4),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: (percentage > 1 ? 1 : percentage).toDouble(),
+                    minHeight: 6,
+                    backgroundColor: Colors.grey[200],
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      percentage > 0.8
+                          ? percentage > 1
+                          ? Colors.red[700]!
+                          : Colors.orange[700]!
+                          : Colors.green[700]!,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: (percentage > 1 ? 1 : percentage).toDouble(),
-                      minHeight: 6,
-                      backgroundColor: Colors.grey[200],
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        percentage > 0.8
-                            ? percentage > 1
-                            ? Colors.red
-                            : Colors.orange
-                            : Colors.green,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete, color: Colors.red),
-                onPressed: () => _confirmDeleteBudget(budget['id']),
-              ),
-              onTap: () => _showBudgetDialog(budget),
+                ),
+              ],
             ),
-          );
-        }).toList(),
-      ],
+            onTap: () => _showBudgetDialog(budget),
+          ),
+        );
+      },
     );
   }
 
@@ -446,7 +463,20 @@ class _BudgetScreenState extends State<BudgetScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(budget == null ? 'Create Budget' : 'Edit Budget'),
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(budget == null ? 'Create Budget' : 'Edit Budget'),
+            if (budget != null)
+              IconButton(
+                icon: const Icon(Icons.delete, color: Colors.red),
+                onPressed: () {
+                  Navigator.pop(context); // Close the dialog
+                  _confirmDeleteBudget(budget['id']);
+                },
+              ),
+          ],
+        ),
         content: Form(
           key: formKey,
           child: Column(
@@ -544,7 +574,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
-                          color: totalRemaining >= 0 ? Colors.green : Colors.red,
+                          color: totalRemaining >= 0 ? Colors.green[700] : Colors.red,
                         )),
                   ],
                 ),
@@ -560,9 +590,9 @@ class _BudgetScreenState extends State<BudgetScreen> {
                 valueColor: AlwaysStoppedAnimation<Color>(
                   percentageSpent > 0.8
                       ? percentageSpent > 1
-                      ? Colors.red
-                      : Colors.orange
-                      : Colors.green,
+                      ? Colors.red[700]!
+                      : Colors.orange[700]!
+                      : Colors.green[700]!,
                 ),
               ),
             ),

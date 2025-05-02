@@ -386,11 +386,6 @@ class DatabaseHelper {
           'note': transaction['note'],
         });
 
-        // Update relevant budget if this is an expense
-        if (type == 'Expense' && category != null) {
-          await _updateBudgetSpending(txn, category, amount);
-        }
-
         // Handle account balance updates
         switch (type) {
           case 'Income':
@@ -436,26 +431,6 @@ class DatabaseHelper {
     }
   }
 
-  Future<void> _updateBudgetSpending(DatabaseExecutor db, String category, double amount) async {
-    final now = DateTime.now();
-    final yearMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}';
-
-    // Check if budget exists
-    final budget = await db.query(
-      'budgets',
-      where: 'category = ? AND year_month = ?',
-      whereArgs: [category, yearMonth],
-    );
-
-    if (budget.isNotEmpty) {
-      await db.rawUpdate('''
-      UPDATE budgets 
-      SET current_month_spent = current_month_spent + ?
-      WHERE category = ? AND year_month = ?
-    ''', [amount, category, yearMonth]);
-    }
-  }
-
   Future<int> updateTransactionType(int transactionId, String newType,
       {int? fromAccountId, int? toAccountId, String? category}) async {
     final db = await database;
@@ -471,7 +446,6 @@ class DatabaseHelper {
       final original = transaction.first;
       final amount = (original['amount'] as num).toDouble();
       final originalType = original['type'] as String;
-      final originalCategory = original['category'] as String?;
 
       // First reverse the original transaction's effect
       switch (originalType) {
@@ -492,10 +466,7 @@ class DatabaseHelper {
               amount,
             );
           }
-          // Reverse budget spending if this was an expense with a category
-          if (originalCategory != null) {
-            await _updateBudgetSpending(txn, originalCategory, -amount);
-          }
+
           break;
         case 'Transfer':
           if (original['from_account_id'] != null &&
@@ -535,10 +506,7 @@ class DatabaseHelper {
               -amount,
             );
           }
-          // Update budget spending if this is now an expense with a category
-          if (category != null) {
-            await _updateBudgetSpending(txn, category, amount);
-          }
+
           break;
         case 'Transfer':
           if (fromAccountId != null && toAccountId != null) {
@@ -587,14 +555,7 @@ class DatabaseHelper {
         if (transaction.isEmpty) return 0;
         final t = transaction.first;
         final amount = (t['amount'] as num).toDouble();
-        final type = t['type'] as String;
-        final category = t['category'] as String?;
         debugPrint('Deleting transaction with amount: $amount');
-
-        // Reverse budget update if this was an expense
-        if (type == 'Expense' && category != null) {
-          await _updateBudgetSpending(txn, category, -amount);
-        }
 
         // Reverse the original transaction
         switch (t['type'] as String) {
@@ -697,6 +658,26 @@ class DatabaseHelper {
       where: 'category_id = ?',
       whereArgs: [categoryId],
     );
+  }
+
+  Future<Map<String, double>> getSpentAmountsByCategory(String yearMonth) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+    SELECT 
+      category, 
+      SUM(amount) as spent 
+    FROM transactions 
+    WHERE type = 'Expense' 
+      AND substr(date, 4, 2) = substr(?, 6, 2)
+      AND substr(date, 7, 4) = substr(?, 1, 4)
+    GROUP BY category
+  ''', [yearMonth, yearMonth]);
+
+    final Map<String, double> spentAmounts = {};
+    for (final row in result) {
+      spentAmounts[row['category'] as String] = (row['spent'] as num).toDouble();
+    }
+    return spentAmounts;
   }
 
   Future<int> addCategory(String name, String type) async {

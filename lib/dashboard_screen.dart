@@ -179,23 +179,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
       builder: (BuildContext context) {
         return GestureDetector(
             onTap: () {
-            Navigator.pop(context); // Dismiss when tapping outside
-          },
-          behavior: HitTestBehavior.opaque, // Makes entire area tappable
-          child: DraggableScrollableSheet(
-            initialChildSize: 0.75,
-            minChildSize: 0.75,
-            maxChildSize: 0.75,
-            builder: (BuildContext context, ScrollController scrollController) {
-              return Container(
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-                ),
-                child: child,
-              );
+              Navigator.pop(context);
             },
-          )
+            behavior: HitTestBehavior.opaque,
+            child: DraggableScrollableSheet(
+              initialChildSize: 0.75,
+              minChildSize: 0.75,
+              maxChildSize: 0.75,
+              builder: (BuildContext context, ScrollController scrollController) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).canvasColor,
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+                  ),
+                  child: child,
+                );
+              },
+            )
         );
       },
     ).then((_) => onDismiss?.call());
@@ -203,6 +203,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Consumer<AppRefreshNotifier>(
       builder: (context, refreshNotifier, _) {
         if (refreshNotifier.shouldRefreshTransactions) {
@@ -244,6 +246,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               TransactionPage(scrollController: ScrollController()),
               onDismiss: _refreshData,
             ),
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: theme.colorScheme.onPrimary,
             child: const Icon(Icons.add),
           ),
         );
@@ -252,64 +256,85 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildHeaderSection(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Container(
-      color: Theme.of(context).scaffoldBackgroundColor,
+      color: theme.scaffoldBackgroundColor,
       child: Column(
         children: [
-          const Divider(thickness: 1, color: Colors.black45),
+          Divider(
+            thickness: 1,
+            color: theme.dividerColor.withOpacity(0.2), // More subtle divider
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 0.0),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.arrow_left),
+                  icon: Icon(Icons.arrow_left,
+                      color: theme.textTheme.bodyLarge?.color?.withOpacity(0.8)),
                   onPressed: _previousMonth,
                 ),
                 GestureDetector(
                   onTap: _selectMonth,
                   child: Text(
                     formattedMonth,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blueGrey,
+                      fontWeight: FontWeight.w600, // Reduced from bold
+                      color: theme.textTheme.titleMedium?.color?.withOpacity(0.9),
                     ),
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.arrow_right),
+                  icon: Icon(Icons.arrow_right,
+                      color: theme.textTheme.bodyLarge?.color?.withOpacity(0.8)),
                   onPressed: _nextMonth,
                 ),
               ],
             ),
           ),
-          const Divider(thickness: 2, color: Colors.black45),
+          Divider(
+            thickness: 1,
+            color: theme.dividerColor.withOpacity(0.2),
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 2.0),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildSummaryText('Income', _formatCurrency(incomeTotal), Colors.blueGrey),
-                _buildSummaryText('Expenses', _formatCurrency(expenseTotal), Colors.red),
-                _buildSummaryText('Balance', _formatCurrency(incomeTotal - expenseTotal), Colors.green),
+                _buildSummaryText('Income', _formatCurrency(incomeTotal),
+                    Colors.green[700]!),
+                _buildSummaryText('Expenses', _formatCurrency(expenseTotal),
+                    Colors.red[700]!),
+                _buildSummaryText('Balance', _formatCurrency(incomeTotal - expenseTotal),
+                    Colors.blueGrey),
               ],
             ),
           ),
-          const Divider(thickness: 2, color: Colors.black45),
+          Divider(
+            thickness: 1,
+            color: theme.dividerColor.withOpacity(0.2),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildTransactionList() {
+    final theme = Theme.of(context);
+
     if (categorizedTransactions.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32.0),
           child: Text(
             'No transactions for $formattedMonth',
-            style: const TextStyle(fontSize: 16, color: Colors.grey),
+            style: TextStyle(
+              fontSize: 16,
+              color: theme.textTheme.bodyMedium?.color?.withOpacity(0.5),
+            ),
           ),
         ),
       );
@@ -327,25 +352,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Divider(thickness: 1, color: Colors.black45),
+            Divider(
+              thickness: 1,
+              color: theme.dividerColor,
+            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
               child: Text(
                 _displayDateFormatter.format(parsedDate),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
-                  color: Colors.black54,
+                  color: theme.textTheme.bodyMedium?.color?.withOpacity(0.6),
                 ),
               ),
             ),
-            const Divider(thickness: 1, color: Colors.black45),
+            Divider(
+              thickness: 1,
+              color: theme.dividerColor,
+            ),
             ...transactions.map((transaction) => _TransactionTile(
               transaction: transaction,
               onTap: () => _showCustomBottomSheet(
                 TransactionUpdatePage(transaction: transaction),
                 onDismiss: _refreshData,
-              )
+              ),
             )),
           ],
         );
@@ -354,14 +385,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildSummaryText(String title, String amount, Color color) {
+    final theme = Theme.of(context);
+
     return Column(
       children: [
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w600,
-            color: Colors.black54,
+            color: theme.textTheme.bodySmall?.color,
           ),
         ),
         Text(
@@ -390,21 +423,29 @@ class _TransactionTile extends StatelessWidget {
     required this.onTap,
   });
 
+  String get _categoryText {
+    final isTransfer = transaction['type'] == 'Transfer';
+    if (isTransfer) return 'Transfer';
+
+    final category = transaction['category'] ?? 'No Category';
+    final subcategory = transaction['subcategory']?.toString();
+
+    return subcategory?.isNotEmpty == true
+        ? '$category/\n$subcategory'
+        : category;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final isTransfer = transaction['type'] == 'Transfer';
-    final amountColor = isTransfer
-        ? Colors.grey // Changed to grey for transfers
-        : transaction['type'] == "Income"
-        ? Colors.blueGrey
-        : Colors.red;
 
-    // Build category text with subcategory if available
-    final categoryText = isTransfer
-        ? 'Transfer'
-        : transaction['subcategory']?.isNotEmpty == true
-        ? '${transaction['category']}/\n${transaction['subcategory']}'
-        : transaction['category'] ?? 'No Category';
+    // Softer colors for dark mode
+    final amountColor = isTransfer
+        ? theme.disabledColor
+        : transaction['type'] == "Income"
+        ? Colors.blueGrey // Softer blue for income
+        : Colors.red[700];    // Softer red for expenses
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 14.0),
@@ -418,8 +459,11 @@ class _TransactionTile extends StatelessWidget {
               child: Align(
                 alignment: Alignment.bottomLeft,
                 child: Text(
-                  categoryText, // Use the built category text
-                  style: const TextStyle(fontSize: 12, color: Colors.black54),
+                  _categoryText,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: theme.textTheme.bodySmall?.color?.withOpacity(0.7),
+                  ),
                 ),
               ),
             ),
@@ -430,10 +474,10 @@ class _TransactionTile extends StatelessWidget {
                 children: [
                   Text(
                     transaction['note'] ?? (isTransfer ? 'Transfer' : 'No Note'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
+                      fontWeight: FontWeight.w600, // Slightly lighter weight
+                      color: theme.textTheme.bodyLarge?.color?.withOpacity(0.9),
                     ),
                   ),
                   const SizedBox(height: 2),
@@ -441,7 +485,10 @@ class _TransactionTile extends StatelessWidget {
                     isTransfer
                         ? '${transaction['from_account'] ?? '?'} → ${transaction['to_account'] ?? '?'}'
                         : transaction['account'] ?? 'No Account',
-                    style: const TextStyle(fontSize: 14, color: Colors.black54),
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: theme.textTheme.bodyMedium?.color?.withOpacity(0.6),
+                    ),
                   ),
                 ],
               ),
@@ -451,7 +498,7 @@ class _TransactionTile extends StatelessWidget {
               style: TextStyle(
                 fontSize: 16,
                 color: amountColor,
-                fontWeight: isTransfer ? FontWeight.normal : FontWeight.bold,
+                fontWeight: isTransfer ? FontWeight.normal : FontWeight.w600,
               ),
             ),
           ],
