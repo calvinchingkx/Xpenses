@@ -1,27 +1,119 @@
-// file: services/data_service.dart
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../database_helper.dart';
 
 class DataService {
-  // Example method - replace with your actual data model
+  final DatabaseHelper dbHelper = DatabaseHelper();
+
   Future<Map<String, dynamic>> getAllData() async {
-    // TODO: Replace with your actual data fetching logic
+    final db = await dbHelper.database;
+
+    // Fetch all data from all tables
+    final accounts = await db.query('accounts');
+    final transactions = await db.query('transactions');
+    final categories = await db.query('categories');
+    final subcategories = await db.query('subcategories');
+    final budgets = await db.query('budgets');
+    final goals = await db.query('goals');
+    final categoryPreferences = await db.query('category_preferences');
+
     return {
-      'transactions': [],
-      'categories': [],
-      'accounts': [],
-      'settings': {},
-      'backupDate': DateTime.now().toIso8601String(),
+      'metadata': {
+        'version': 1,
+        'exportDate': DateTime.now().toIso8601String(),
+        'appName': 'Finance Manager',
+      },
+      'accounts': accounts,
+      'transactions': transactions,
+      'categories': categories,
+      'subcategories': subcategories,
+      'budgets': budgets,
+      'goals': goals,
+      'category_preferences': categoryPreferences,
     };
   }
 
   // Example method - replace with your actual data saving logic
   Future<void> restoreAllData(Map<String, dynamic> data) async {
-    // TODO: Replace with your actual data restoration logic
-    print('Restoring data: $data');
+    final db = await dbHelper.database;
+
+    await db.transaction((txn) async {
+      // Clear all tables (order matters due to foreign key constraints)
+      await txn.delete('category_preferences');
+      await txn.delete('transactions');
+      await txn.delete('budgets');
+      await txn.delete('goals');
+      await txn.delete('subcategories');
+      await txn.delete('categories');
+      await txn.delete('accounts');
+
+      // Restore accounts first (referenced by other tables)
+      if (data['accounts'] != null) {
+        for (final account in data['accounts']) {
+          await txn.insert('accounts', account);
+        }
+      }
+
+      // Restore categories (referenced by subcategories and transactions)
+      if (data['categories'] != null) {
+        for (final category in data['categories']) {
+          await txn.insert('categories', category);
+        }
+      }
+
+      // Restore subcategories
+      if (data['subcategories'] != null) {
+        for (final subcategory in data['subcategories']) {
+          await txn.insert('subcategories', subcategory);
+        }
+      }
+
+      // Restore transactions
+      if (data['transactions'] != null) {
+        for (final transaction in data['transactions']) {
+          await txn.insert('transactions', transaction);
+        }
+      }
+
+      // Restore budgets
+      if (data['budgets'] != null) {
+        for (final budget in data['budgets']) {
+          await txn.insert('budgets', budget);
+        }
+      }
+
+      // Restore goals
+      if (data['goals'] != null) {
+        for (final goal in data['goals']) {
+          await txn.insert('goals', goal);
+        }
+      }
+
+      // Restore category preferences
+      if (data['category_preferences'] != null) {
+        for (final pref in data['category_preferences']) {
+          await txn.insert('category_preferences', pref);
+        }
+      }
+    });
+
+    // After restoring, we should recalculate all account balances
+    await _recalculateAllAccountBalances();
+  }
+
+  Future<void> _recalculateAllAccountBalances() async {
+    final db = await dbHelper.database;
+    final accounts = await db.query('accounts');
+
+    for (final account in accounts) {
+      final accountId = account['id'] as int;
+      final newBalance = await dbHelper.calculateAccountBalance(accountId);
+      await dbHelper.forceUpdateAccountBalance(accountId, newBalance);
+    }
   }
 
   Future<String> get _localPath async {
@@ -91,5 +183,55 @@ class DataService {
     } catch (e) {
       throw Exception('Failed to share backup: $e');
     }
+  }
+
+  Future<void> exportDataToCsv() async {
+    try {
+      if (!await requestStoragePermission()) {
+        throw Exception('Storage permission denied');
+      }
+
+      final data = await getAllData();
+      final csvData = _convertToCsv(data);
+      final file = File('${await _localPath}/finance_backup.csv');
+      await file.writeAsString(csvData);
+    } on PlatformException catch (e) {
+      throw Exception('Failed to export data: ${e.message}');
+    }
+  }
+
+  String _convertToCsv(Map<String, dynamic> data) {
+    final buffer = StringBuffer();
+
+    // Example CSV conversion - adjust based on your data structure
+    buffer.writeln('Type,Amount,Date,Category,Description');
+    if (data['transactions'] != null) {
+      for (final transaction in data['transactions']) {
+        buffer.writeln([
+          transaction['type'],
+          transaction['amount'],
+          transaction['date'],
+          transaction['category'],
+          transaction['description'],
+        ].join(','));
+      }
+    }
+
+    return buffer.toString();
+  }
+
+  Future<void> deleteAllData() async {
+    final db = await dbHelper.database;
+
+    await db.transaction((txn) async {
+      // Delete in reverse order of foreign key dependencies
+      await txn.delete('category_preferences');
+      await txn.delete('transactions');
+      await txn.delete('budgets');
+      await txn.delete('goals');
+      await txn.delete('subcategories');
+      await txn.delete('categories');
+      await txn.delete('accounts');
+    });
   }
 }

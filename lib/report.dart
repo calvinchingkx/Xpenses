@@ -24,6 +24,16 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
   late TabController _barTabController;
   bool _isLoading = false;
 
+  bool get _hasAnyData {
+    return _totalIncome > 0 ||
+        _totalExpenses > 0 ||
+        _incomeByCategory.isNotEmpty ||
+        _expensesByCategory.isNotEmpty ||
+        _monthlyTrends.isNotEmpty ||
+        _savingsTrends.isNotEmpty ||
+        _transactions.isNotEmpty;
+  }
+
   // Data variables
   double _totalIncome = 0.0;
   double _totalExpenses = 0.0;
@@ -40,6 +50,17 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
     _pieTabController = TabController(length: 3, vsync: this);
     _trendTabController = TabController(length: 2, vsync: this);
     _barTabController = TabController(length: 2, vsync: this);
+
+    // Initialize all data structures
+    _totalIncome = 0.0;
+    _totalExpenses = 0.0;
+    _incomeByCategory = {};
+    _expensesByCategory = {};
+    _subcategoryDetails = {};
+    _monthlyTrends = {};
+    _savingsTrends = {};
+    _transactions = [];
+
     _loadData();
   }
 
@@ -846,6 +867,18 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
         bool showHorizontalAxis = false,
       }) {
     final months = trends.keys.toList();
+    if (months.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.show_chart, size: 48, color: Colors.grey),
+            SizedBox(height: 8),
+            Text('No trend data available', style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      );
+    }
     final maxValue = trends.values.fold<double>(0.0, (max, data) {
       final currentMax = data.values.fold<double>(0.0, (currMax, val) => val > currMax ? val : currMax);
       return currentMax > max ? currentMax : max;
@@ -854,6 +887,13 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
       final currentMin = data.values.fold<double>(double.infinity, (currMin, val) => val < currMin ? val : currMin);
       return currentMin < min ? currentMin : min;
     });
+
+    final double horizontalInterval;
+    if (maxValue <= 0) {
+      horizontalInterval = 100.0; // Default interval when no positive values
+    } else {
+      horizontalInterval = maxValue / 5;
+    }
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -878,7 +918,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
           gridData: FlGridData(
             show: true,
             drawVerticalLine: false,
-            horizontalInterval: maxValue / 5,
+            horizontalInterval: horizontalInterval, // Use the calculated interval
           ),
           titlesData: FlTitlesData(
             show: true,
@@ -1011,7 +1051,18 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
               ),
             ),
             SizedBox(height: 12),
-            ..._transactions.take(3).map((t) => _buildTransactionTile(t)).toList(),
+            if (_transactions.isEmpty)
+              Center(
+                child: Column(
+                  children: [
+                    Icon(Icons.receipt, size: 48, color: Colors.grey),
+                    SizedBox(height: 8),
+                    Text('No transactions found', style: TextStyle(color: Colors.grey)),
+                  ],
+                ),
+              )
+            else
+              ..._transactions.take(3).map((t) => _buildTransactionTile(t)).toList(),
             if (_transactions.length > 3)
               Center(
                 child: TextButton(
@@ -1179,58 +1230,76 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
   Future<void> _fetchReportData(int month, int year) async {
     final db = DatabaseHelper();
 
-    // Get totals for the selected month
-    _totalIncome = await db.getTotalByTypeForMonth('Income', month, year) ?? 0.0;
-    _totalExpenses = await db.getTotalByTypeForMonth('Expense', month, year) ?? 0.0;
-
-    // Get transactions for the selected month
-    _transactions = await db.getTransactionsForMonth(month, year);
-
-    // Reset category data
+    // Initialize all data structures
+    _totalIncome = 0.0;
+    _totalExpenses = 0.0;
+    _transactions = [];
     _incomeByCategory = {};
     _expensesByCategory = {};
     _subcategoryDetails = {};
+    _monthlyTrends = {};
+    _savingsTrends = {};
 
-    for (final t in _transactions) {
-      if (t['type'] == 'Expense' && t['category'] != null) {
-        final category = t['category'] as String;
-        final amount = (t['amount'] as num).toDouble();
-        _expensesByCategory[category] = (_expensesByCategory[category] ?? 0) + amount;
+    try {
+      // Get totals for the selected month
+      _totalIncome = await db.getTotalByTypeForMonth('Income', month, year) ?? 0.0;
+      _totalExpenses = await db.getTotalByTypeForMonth('Expense', month, year) ?? 0.0;
 
-        // Group by subcategory
-        final subcategory = t['subcategory'] as String? ?? 'Uncategorized';
-        if (!_subcategoryDetails.containsKey(category)) {
-          _subcategoryDetails[category] = [];
+      // Get transactions for the selected month
+      _transactions = await db.getTransactionsForMonth(month, year) ?? [];
+
+      for (final t in _transactions) {
+        if (t['type'] == 'Expense' && t['category'] != null) {
+          final category = t['category'] as String;
+          final amount = (t['amount'] as num).toDouble();
+          _expensesByCategory[category] = (_expensesByCategory[category] ?? 0) + amount;
+
+          // Group by subcategory
+          final subcategory = t['subcategory'] as String? ?? 'Uncategorized';
+          if (!_subcategoryDetails.containsKey(category)) {
+            _subcategoryDetails[category] = [];
+          }
+          _subcategoryDetails[category]!.add({
+            'name': subcategory,
+            'amount': amount,
+          });
+        } else if (t['type'] == 'Income' && t['category'] != null) {
+          final category = t['category'] as String;
+          final amount = (t['amount'] as num).toDouble();
+          _incomeByCategory[category] = (_incomeByCategory[category] ?? 0) + amount;
+
+          // Group by subcategory
+          final subcategory = t['subcategory'] as String? ?? 'Uncategorized';
+          if (!_subcategoryDetails.containsKey(category)) {
+            _subcategoryDetails[category] = [];
+          }
+          _subcategoryDetails[category]!.add({
+            'name': subcategory,
+            'amount': amount,
+          });
         }
-        _subcategoryDetails[category]!.add({
-          'name': subcategory,
-          'amount': amount,
-        });
-      } else if (t['type'] == 'Income' && t['category'] != null) {
-        final category = t['category'] as String;
-        final amount = (t['amount'] as num).toDouble();
-        _incomeByCategory[category] = (_incomeByCategory[category] ?? 0) + amount;
-
-        // Group by subcategory
-        final subcategory = t['subcategory'] as String? ?? 'Uncategorized';
-        if (!_subcategoryDetails.containsKey(category)) {
-          _subcategoryDetails[category] = [];
-        }
-        _subcategoryDetails[category]!.add({
-          'name': subcategory,
-          'amount': amount,
-        });
       }
-    }
 
-    // Get monthly trends (last 6 months)
-    _monthlyTrends = await _getMonthlyTrends();
+      // Get monthly trends (last 6 months)
+      _monthlyTrends = await _getMonthlyTrends() ?? {};
 
-    // Get savings trends (last 6 months)
-    _savingsTrends = await _getSavingsTrends();
+      // Get savings trends (last 6 months)
+      _savingsTrends = await _getSavingsTrends() ?? {};
 
-    if (mounted) {
-      setState(() {});
+    } catch (e) {
+      // Handle any errors that might occur during data fetching
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading data: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 
@@ -1239,17 +1308,22 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
     final now = DateTime.now();
     final result = <String, Map<String, double>>{};
 
-    for (int i = 5; i >= 0; i--) {
-      final month = DateTime(now.year, now.month - i, 1);
-      final monthKey = DateFormat('MMM y').format(month);
+    try {
+      for (int i = 5; i >= 0; i--) {
+        final month = DateTime(now.year, now.month - i, 1);
+        final monthKey = DateFormat('MMM y').format(month);
 
-      final income = await db.getTotalByTypeForMonth('Income', month.month, month.year) ?? 0.0;
-      final expense = await db.getTotalByTypeForMonth('Expense', month.month, month.year) ?? 0.0;
+        final income = await db.getTotalByTypeForMonth('Income', month.month, month.year) ?? 0.0;
+        final expense = await db.getTotalByTypeForMonth('Expense', month.month, month.year) ?? 0.0;
 
-      result[monthKey] = {
-        'income': income,
-        'expense': expense,
-      };
+        result[monthKey] = {
+          'income': income,
+          'expense': expense,
+        };
+      }
+    } catch (e) {
+      // Return empty map if there's an error
+      return {};
     }
 
     return result;
@@ -1261,18 +1335,23 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
     final result = <String, Map<String, double>>{};
     double cumulativeSavings = 0.0;
 
-    for (int i = 5; i >= 0; i--) {
-      final month = DateTime(now.year, now.month - i, 1);
-      final monthKey = DateFormat('MMM y').format(month);
+    try {
+      for (int i = 5; i >= 0; i--) {
+        final month = DateTime(now.year, now.month - i, 1);
+        final monthKey = DateFormat('MMM y').format(month);
 
-      final income = await db.getTotalByTypeForMonth('Income', month.month, month.year) ?? 0.0;
-      final expense = await db.getTotalByTypeForMonth('Expense', month.month, month.year) ?? 0.0;
-      final savings = income - expense;
-      cumulativeSavings += savings;
+        final income = await db.getTotalByTypeForMonth('Income', month.month, month.year) ?? 0.0;
+        final expense = await db.getTotalByTypeForMonth('Expense', month.month, month.year) ?? 0.0;
+        final savings = income - expense;
+        cumulativeSavings += savings;
 
-      result[monthKey] = {
-        'savings': cumulativeSavings,
-      };
+        result[monthKey] = {
+          'savings': cumulativeSavings,
+        };
+      }
+    } catch (e) {
+      // Return empty map if there's an error
+      return {};
     }
 
     return result;
@@ -1301,13 +1380,8 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          'Financial Reports',
-          //style: TextStyle(color: Colors.white),
-        ),
+        title: Text('Financial Reports'),
         centerTitle: true,
-        //backgroundColor: Colors.blueAccent,
-        //iconTheme: IconThemeData(color: Colors.white),
       ),
       body: SmartRefresher(
         controller: _refreshController,
@@ -1322,7 +1396,8 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
         ),
         child: _isLoading
             ? Center(child: CircularProgressIndicator())
-            : SingleChildScrollView(
+            : _hasAnyData
+            ? SingleChildScrollView(
           padding: const EdgeInsets.all(16.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1337,6 +1412,38 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
               if (_monthlyTrends.isNotEmpty || _savingsTrends.isNotEmpty)
                 _buildTrendChartSection(),
               _buildRecentTransactions(),
+            ],
+          ),
+        )
+            : Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.insert_chart_outlined, size: 64, color: Colors.grey),
+              SizedBox(height: 16),
+              Text(
+                'No Financial Data Available',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
+              SizedBox(height: 8),
+              Text(
+                'Add transactions to see reports',
+                style: TextStyle(color: Colors.grey),
+              ),
+              SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => MainScreen()),
+                  );
+                },
+                child: Text('Add Transaction'),
+              ),
             ],
           ),
         ),

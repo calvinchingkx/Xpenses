@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'category_screen.dart';
 import 'theme_provider.dart';
+import 'services/data_service.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -273,14 +274,14 @@ class SettingsScreen extends StatelessWidget {
                 context,
                 icon: Icons.backup_outlined,
                 title: 'Backup Data',
-                onTap: () {},
+                onTap: () => _exportData(context),
               ),
               const Divider(height: 1, indent: 16),
               _buildSettingTile(
                 context,
                 icon: Icons.restore_outlined,
                 title: 'Restore Data',
-                onTap: () {},
+                onTap: () => _importData(context),
               ),
               const Divider(height: 1, indent: 16),
               _buildSettingTile(
@@ -300,32 +301,35 @@ class SettingsScreen extends StatelessWidget {
   void _showDeleteConfirmationDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Delete All Data'),
-          content: const Text(
-              'Are you sure you want to delete all your financial data? This action cannot be undone.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                // TODO: Implement data deletion logic
-                Navigator.pop(context);
+      builder: (context) => AlertDialog(
+        title: const Text('Delete All Data'),
+        content: const Text('This will permanently erase all your financial data. Continue?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              try {
+                await DataService().deleteAllData();
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('All data has been deleted')),
                 );
-              },
-              child: const Text(
-                'Delete',
-                style: TextStyle(color: Colors.red),
-              ),
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Deletion failed: ${e.toString()}')),
+                );
+              }
+            },
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: Colors.red),
             ),
-          ],
-        );
-      },
+          ),
+        ],
+      ),
     );
   }
 
@@ -408,4 +412,73 @@ class SettingsScreen extends StatelessWidget {
       onTap: onTap,
     );
   }
+
+  Future<void> _exportData(BuildContext context) async {
+    try {
+      final dataService = DataService();
+      await dataService.exportDataToJson();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Data exported successfully!')),
+      );
+
+      // Optional: show dialog with file location
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Export Successful'),
+          content: const Text('Your financial data has been exported to a JSON file.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Export failed: ${e.toString()}')),
+      );
+    }
+  }
+
+  Future<void> _importData(BuildContext context) async {
+    try {
+      final dataService = DataService();
+
+      // Show confirmation dialog
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Confirm Import'),
+          content: const Text(
+              'This will overwrite your current data with the backup. Continue?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Import'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed == true) {
+        await dataService.importDataFromJson();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Data imported successfully!')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Import failed: ${e.toString()}')),
+      );
+    }
+  }
+
+
 }

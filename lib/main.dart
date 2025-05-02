@@ -6,7 +6,7 @@ import 'account.dart';
 import 'report.dart';
 import 'setting.dart';
 import 'dashboard_screen.dart';
-import 'theme_provider.dart'; // Import your ThemeProvider
+import 'theme_provider.dart';
 
 void main() {
   runApp(
