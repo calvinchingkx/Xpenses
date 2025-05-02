@@ -365,6 +365,13 @@ class _BudgetScreenState extends State<BudgetScreen> {
         final remaining = limit - spent;
         final percentage = limit > 0 ? (spent / limit) : 0;
 
+        // Show overspend alert if needed
+        if (remaining < 0) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showOverspendAlert(budget['category'], remaining.abs());
+          });
+        }
+
         return Card(
           margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
           child: InkWell(

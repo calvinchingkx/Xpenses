@@ -82,6 +82,101 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+  void _showPrivacySecurityDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(
+            'Privacy & Security',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'We take your financial data security seriously. Here are the measures we take to protect your information:',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                _buildPrivacyFeature(
+                  context,
+                  icon: Icons.lock,
+                  title: 'Data Encryption',
+                  description: 'All your financial data is encrypted both in transit and at rest.',
+                ),
+                _buildPrivacyFeature(
+                  context,
+                  icon: Icons.fingerprint,
+                  title: 'Biometric Authentication',
+                  description: 'Optional fingerprint or face ID to secure access to your data.',
+                ),
+                _buildPrivacyFeature(
+                  context,
+                  icon: Icons.cloud_off,
+                  title: 'Offline Storage',
+                  description: 'Your data is stored locally on your device by default.',
+                ),
+                _buildPrivacyFeature(
+                  context,
+                  icon: Icons.share,
+                  title: 'No Data Sharing',
+                  description: 'We do not share your financial data with third parties.',
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPrivacyFeature(
+      BuildContext context, {
+        required IconData icon,
+        required String title,
+        required String description,
+      }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 24, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  description,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -113,7 +208,7 @@ class SettingsScreen extends StatelessWidget {
                 context,
                 icon: Icons.security_outlined,
                 title: 'Privacy & Security',
-                onTap: () {},
+                onTap: () => _showPrivacySecurityDialog(context),
               ),
             ],
           ),
@@ -129,7 +224,6 @@ class SettingsScreen extends StatelessWidget {
                 context,
                 icon: Icons.arrow_upward_rounded,
                 title: 'Income Categories',
-                //iconColor: Colors.green,
                 onTap: () => _navigateToCategoryScreen(context, 'Income'),
               ),
               const Divider(height: 1, indent: 16),
@@ -137,7 +231,6 @@ class SettingsScreen extends StatelessWidget {
                 context,
                 icon: Icons.arrow_downward_rounded,
                 title: 'Expense Categories',
-                //iconColor: Colors.red,
                 onTap: () => _navigateToCategoryScreen(context, 'Expense'),
               ),
             ],
@@ -189,10 +282,50 @@ class SettingsScreen extends StatelessWidget {
                 title: 'Restore Data',
                 onTap: () {},
               ),
+              const Divider(height: 1, indent: 16),
+              _buildSettingTile(
+                context,
+                icon: Icons.delete_outline,
+                title: 'Delete All Data',
+                iconColor: Colors.red,
+                onTap: () => _showDeleteConfirmationDialog(context),
+              ),
             ],
           ),
         ],
       ),
+    );
+  }
+
+  void _showDeleteConfirmationDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete All Data'),
+          content: const Text(
+              'Are you sure you want to delete all your financial data? This action cannot be undone.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                // TODO: Implement data deletion logic
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('All data has been deleted')),
+                );
+              },
+              child: const Text(
+                'Delete',
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
