@@ -42,7 +42,7 @@ dependencies:
   google_mlkit_text_recognition: ^0.13.0
   image_picker: ^1.0.4
   path_provider: ^2.1.1
-  permission_handler: ^10.4.0
+  permission_handler: ^10.4.4
   share_plus: ^7.0.2
   flutter_local_notifications: ^18.0.0
 

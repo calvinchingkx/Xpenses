@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'app_refresh_notifier.dart';
 import 'budget.dart';
@@ -11,6 +13,10 @@ import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (Platform.isAndroid) {
+    await Permission.notification.request();
+  }
 
   // Initialize notification service
   final notificationService = NotificationService();

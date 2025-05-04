@@ -224,7 +224,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 subtitle: const Text('Verify notifications are working'),
                 onTap: () async {
                   final notificationService = Provider.of<NotificationService>(context, listen: false);
-                  await notificationService.showBudgetWarning('Test Category', 85);
+                  await notificationService.showBudgetWarning('Test Category', 100);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Test notification sent')),
                   );

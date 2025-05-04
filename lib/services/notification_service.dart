@@ -24,7 +24,7 @@ class NotificationService {
     await notificationsPlugin.initialize(
       initializationSettings,
       onDidReceiveNotificationResponse: (details) {
-        // Handle notification tap if needed
+        // Handle notification tap
       },
     );
 
@@ -32,12 +32,11 @@ class NotificationService {
   }
 
   Future<void> _createNotificationChannels() async {
-    // For Android 8.0+
     final androidPlugin = notificationsPlugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
 
     if (androidPlugin != null) {
-      // Budget alert channel
+      // Budget alert channel (high importance)
       await androidPlugin.createNotificationChannel(
         const AndroidNotificationChannel(
           'budget_alerts',
@@ -45,11 +44,10 @@ class NotificationService {
           description: 'Notifications for budget overages',
           importance: Importance.max,
           playSound: true,
-          sound: RawResourceAndroidNotificationSound('notification'),
         ),
       );
 
-      // Budget warning channel
+      // Budget warning channel (default importance)
       await androidPlugin.createNotificationChannel(
         const AndroidNotificationChannel(
           'budget_warnings',
