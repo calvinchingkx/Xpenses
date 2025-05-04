@@ -1,4 +1,8 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'category_screen.dart';
 import 'theme_provider.dart';
@@ -422,18 +426,53 @@ class SettingsScreen extends StatelessWidget {
   Future<void> _exportData(BuildContext context) async {
     try {
       final dataService = DataService();
-      await dataService.exportDataToJson();
+      final hasPermission = await dataService.requestStoragePermission();
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Data exported successfully!')),
-      );
+      if (!hasPermission) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Storage permission required to export data')),
+        );
+        return;
+      }
 
-      // Optional: show dialog with file location
+      final filePath = await dataService.exportDataToJson();
+      final file = File(filePath);
+
       await showDialog(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Export Successful'),
-          content: const Text('Your financial data has been exported to a JSON file.'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (filePath.contains('Download'))
+                const Text('✅ File saved to Downloads folder')
+              else
+                const Text('⚠️ Saved to app storage'),
+              const SizedBox(height: 16),
+              const Text('File name:', style: TextStyle(fontWeight: FontWeight.bold)),
+              Text(file.path.split('/').last),
+              const SizedBox(height: 16),
+              const Text('Full path:'),
+              SelectableText(filePath),
+              const SizedBox(height: 16),
+              TextButton.icon(
+                icon: const Icon(Icons.share),
+                label: const Text('Share Backup'),
+                onPressed: () => dataService.shareBackupFile(context),
+              ),
+              TextButton.icon(
+                icon: const Icon(Icons.copy),
+                label: const Text('Copy Path'),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: filePath));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Path copied to clipboard')),
+                  );
+                },
+              ),
+            ],
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -452,14 +491,21 @@ class SettingsScreen extends StatelessWidget {
   Future<void> _importData(BuildContext context) async {
     try {
       final dataService = DataService();
+      final hasPermission = await dataService.requestStoragePermission();
+
+      if (!hasPermission) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Storage permission required to import data')),
+        );
+        return;
+      }
 
       // Show confirmation dialog
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Confirm Import'),
-          content: const Text(
-              'This will overwrite your current data with the backup. Continue?'),
+          content: const Text('This will overwrite your current data with the backup. Continue?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -474,10 +520,21 @@ class SettingsScreen extends StatelessWidget {
       );
 
       if (confirmed == true) {
-        await dataService.importDataFromJson();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Data imported successfully!')),
+        // Pick the backup file
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: ['json'],
+          allowMultiple: false,
         );
+
+        if (result != null && result.files.isNotEmpty) {
+          final file = File(result.files.single.path!);
+          await dataService.importDataFromJson(file);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Data imported successfully!')),
+          );
+        }
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -485,6 +542,4 @@ class SettingsScreen extends StatelessWidget {
       );
     }
   }
-
-
 }

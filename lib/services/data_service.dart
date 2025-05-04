@@ -2,107 +2,125 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:sqflite/sqflite.dart';
 import '../database_helper.dart';
+
+class DataExportException implements Exception {
+  final String message;
+  DataExportException(this.message);
+
+  @override
+  String toString() => 'DataExportException: $message';
+}
+
+class DataImportException implements Exception {
+  final String message;
+  DataImportException(this.message);
+
+  @override
+  String toString() => 'DataImportException: $message';
+}
 
 class DataService {
   final DatabaseHelper dbHelper = DatabaseHelper();
 
   Future<Map<String, dynamic>> getAllData() async {
-    final db = await dbHelper.database;
+    try {
+      final db = await dbHelper.database;
 
-    // Fetch all data from all tables
-    final accounts = await db.query('accounts');
-    final transactions = await db.query('transactions');
-    final categories = await db.query('categories');
-    final subcategories = await db.query('subcategories');
-    final budgets = await db.query('budgets');
-    final goals = await db.query('goals');
-    final categoryPreferences = await db.query('category_preferences');
+      final accounts = await db.query('accounts');
+      final transactions = await db.query('transactions');
+      final categories = await db.query('categories');
+      final subcategories = await db.query('subcategories');
+      final budgets = await db.query('budgets');
+      final goals = await db.query('goals');
+      final categoryPreferences = await db.query('category_preferences');
 
-    return {
-      'metadata': {
-        'version': 1,
-        'exportDate': DateTime.now().toIso8601String(),
-        'appName': 'Finance Manager',
-      },
-      'accounts': accounts,
-      'transactions': transactions,
-      'categories': categories,
-      'subcategories': subcategories,
-      'budgets': budgets,
-      'goals': goals,
-      'category_preferences': categoryPreferences,
-    };
+      return {
+        'metadata': {
+          'version': 1,
+          'exportDate': DateTime.now().toIso8601String(),
+          'appName': 'Finance Manager',
+        },
+        'accounts': accounts,
+        'transactions': transactions,
+        'categories': categories,
+        'subcategories': subcategories,
+        'budgets': budgets,
+        'goals': goals,
+        'category_preferences': categoryPreferences,
+      };
+    } catch (e) {
+      throw DataExportException('Failed to gather data: ${e.toString()}');
+    }
   }
 
-  // Example method - replace with your actual data saving logic
   Future<void> restoreAllData(Map<String, dynamic> data) async {
-    final db = await dbHelper.database;
-
-    await db.transaction((txn) async {
-      // Clear all tables (order matters due to foreign key constraints)
-      await txn.delete('category_preferences');
-      await txn.delete('transactions');
-      await txn.delete('budgets');
-      await txn.delete('goals');
-      await txn.delete('subcategories');
-      await txn.delete('categories');
-      await txn.delete('accounts');
-
-      // Restore accounts first (referenced by other tables)
-      if (data['accounts'] != null) {
-        for (final account in data['accounts']) {
-          await txn.insert('accounts', account);
-        }
+    try {
+      if (data['metadata'] == null || data['metadata']['version'] != 1) {
+        throw DataImportException('Invalid data format or version');
       }
 
-      // Restore categories (referenced by subcategories and transactions)
-      if (data['categories'] != null) {
-        for (final category in data['categories']) {
-          await txn.insert('categories', category);
-        }
-      }
+      final db = await dbHelper.database;
 
-      // Restore subcategories
-      if (data['subcategories'] != null) {
-        for (final subcategory in data['subcategories']) {
-          await txn.insert('subcategories', subcategory);
-        }
-      }
+      await db.transaction((txn) async {
+        await _clearDatabase(txn);
 
-      // Restore transactions
-      if (data['transactions'] != null) {
-        for (final transaction in data['transactions']) {
-          await txn.insert('transactions', transaction);
+        if (data['accounts'] != null) {
+          await _bulkInsert(txn, 'accounts', data['accounts']);
         }
-      }
 
-      // Restore budgets
-      if (data['budgets'] != null) {
-        for (final budget in data['budgets']) {
-          await txn.insert('budgets', budget);
+        if (data['categories'] != null) {
+          await _bulkInsert(txn, 'categories', data['categories']);
         }
-      }
 
-      // Restore goals
-      if (data['goals'] != null) {
-        for (final goal in data['goals']) {
-          await txn.insert('goals', goal);
+        if (data['subcategories'] != null) {
+          await _bulkInsert(txn, 'subcategories', data['subcategories']);
         }
-      }
 
-      // Restore category preferences
-      if (data['category_preferences'] != null) {
-        for (final pref in data['category_preferences']) {
-          await txn.insert('category_preferences', pref);
+        if (data['transactions'] != null) {
+          await _bulkInsert(txn, 'transactions', data['transactions']);
         }
-      }
-    });
 
-    // After restoring, we should recalculate all account balances
-    await _recalculateAllAccountBalances();
+        if (data['budgets'] != null) {
+          await _bulkInsert(txn, 'budgets', data['budgets']);
+        }
+
+        if (data['goals'] != null) {
+          await _bulkInsert(txn, 'goals', data['goals']);
+        }
+
+        if (data['category_preferences'] != null) {
+          await _bulkInsert(txn, 'category_preferences', data['category_preferences']);
+        }
+      });
+
+      await _recalculateAllAccountBalances();
+    } catch (e) {
+      throw DataImportException('Failed to restore data: ${e.toString()}');
+    }
+  }
+
+  Future<void> _bulkInsert(DatabaseExecutor db, String table, List<dynamic> items) async {
+    final batch = db.batch();
+    for (final item in items) {
+      batch.insert(table, item as Map<String, dynamic>);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<void> _clearDatabase(DatabaseExecutor db) async {
+    await db.delete('category_preferences');
+    await db.delete('transactions');
+    await db.delete('budgets');
+    await db.delete('goals');
+    await db.delete('subcategories');
+    await db.delete('categories');
+    await db.delete('accounts');
   }
 
   Future<void> _recalculateAllAccountBalances() async {
@@ -117,122 +135,119 @@ class DataService {
   }
 
   Future<String> get _localPath async {
-    final directory = await getApplicationDocumentsDirectory();
+    final directory = await getApplicationSupportDirectory();
     return directory.path;
   }
 
   Future<File> get _backupFile async {
     final path = await _localPath;
-    return File('$path/finance_backup.json');
+    return File('$path/finance_backup_${DateTime.now().millisecondsSinceEpoch}.json');
   }
 
   Future<bool> requestStoragePermission() async {
     if (Platform.isAndroid) {
-      final status = await Permission.storage.request();
-      return status.isGranted;
+      if (await Permission.storage.isGranted ||
+          await Permission.manageExternalStorage.isGranted) {
+        return true;
+      }
+
+      final storageStatus = await Permission.storage.request();
+      final manageStatus = await Permission.manageExternalStorage.request();
+
+      return storageStatus.isGranted || manageStatus.isGranted;
     }
     return true;
   }
 
-  Future<void> exportDataToJson() async {
+  Future<String> exportDataToJson() async {
     try {
       if (!await requestStoragePermission()) {
-        throw Exception('Storage permission denied');
+        throw DataExportException('Storage permission denied');
       }
 
+      Directory directory;
+      if (Platform.isAndroid) {
+        // Try to get the public Downloads directory
+        if (await _isDownloadsDirectoryAccessible()) {
+          directory = Directory('/storage/emulated/0/Download');
+        } else {
+          // Fallback to app-specific directory
+          directory = await getApplicationSupportDirectory();
+        }
+      } else {
+        // For iOS/other platforms
+        directory = await getApplicationSupportDirectory();
+      }
+
+      // Create a visible filename
+      final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+      final fileName = 'finance_backup_$timestamp.json';
+      final file = File('${directory.path}/$fileName');
+
+      // Make sure the file is created with proper permissions
       final data = await getAllData();
-      final file = await _backupFile;
-      await file.writeAsString(jsonEncode(data));
+      await file.writeAsString(jsonEncode(data), flush: true);
+
+      // For Android - make the file visible in media scanner
+      if (Platform.isAndroid) {
+        try {
+          await File(file.path).rename(file.path); // Triggers media scan
+        } catch (e) {
+          debugPrint('Media scan trigger failed: $e');
+        }
+      }
+
+      return file.path;
     } on PlatformException catch (e) {
-      throw Exception('Failed to export data: ${e.message}');
+      throw DataExportException('Failed to export data: ${e.message}');
     }
   }
 
-  Future<void> importDataFromJson() async {
+  Future<bool> _isDownloadsDirectoryAccessible() async {
+    try {
+      final dir = Directory('/storage/emulated/0/Download');
+      return await dir.exists();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<void> importDataFromJson(File file) async {
     try {
       if (!await requestStoragePermission()) {
-        throw Exception('Storage permission denied');
+        throw DataImportException('Storage permission denied');
       }
 
-      final file = await _backupFile;
       if (!await file.exists()) {
-        throw Exception('No backup file found');
+        throw DataImportException('No backup file found');
       }
 
       final contents = await file.readAsString();
       final data = jsonDecode(contents) as Map<String, dynamic>;
       await restoreAllData(data);
     } on PlatformException catch (e) {
-      throw Exception('Failed to import data: ${e.message}');
+      throw DataImportException('Failed to import data: ${e.message}');
+    } on FormatException {
+      throw DataImportException('Invalid JSON format');
     }
   }
 
   Future<void> shareBackupFile(BuildContext context) async {
     try {
-      final file = await _backupFile;
-      if (!await file.exists()) {
-        throw Exception('No backup file found');
-      }
-
-      // For sharing functionality, you can use the share_plus package
-      // await Share.shareXFiles([XFile(file.path)], text: 'Finance App Backup');
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Backup file ready at: ${file.path}')),
-      );
+      final filePath = await exportDataToJson();
+      final file = File(filePath);
+      await Share.shareXFiles([XFile(file.path)], text: 'Finance App Backup');
     } catch (e) {
-      throw Exception('Failed to share backup: $e');
+      throw DataExportException('Failed to share backup: $e');
     }
-  }
-
-  Future<void> exportDataToCsv() async {
-    try {
-      if (!await requestStoragePermission()) {
-        throw Exception('Storage permission denied');
-      }
-
-      final data = await getAllData();
-      final csvData = _convertToCsv(data);
-      final file = File('${await _localPath}/finance_backup.csv');
-      await file.writeAsString(csvData);
-    } on PlatformException catch (e) {
-      throw Exception('Failed to export data: ${e.message}');
-    }
-  }
-
-  String _convertToCsv(Map<String, dynamic> data) {
-    final buffer = StringBuffer();
-
-    // Example CSV conversion - adjust based on your data structure
-    buffer.writeln('Type,Amount,Date,Category,Description');
-    if (data['transactions'] != null) {
-      for (final transaction in data['transactions']) {
-        buffer.writeln([
-          transaction['type'],
-          transaction['amount'],
-          transaction['date'],
-          transaction['category'],
-          transaction['description'],
-        ].join(','));
-      }
-    }
-
-    return buffer.toString();
   }
 
   Future<void> deleteAllData() async {
-    final db = await dbHelper.database;
-
-    await db.transaction((txn) async {
-      // Delete in reverse order of foreign key dependencies
-      await txn.delete('category_preferences');
-      await txn.delete('transactions');
-      await txn.delete('budgets');
-      await txn.delete('goals');
-      await txn.delete('subcategories');
-      await txn.delete('categories');
-      await txn.delete('accounts');
-      await txn.delete('user');
-    });
+    try {
+      final db = await dbHelper.database;
+      await db.transaction(_clearDatabase);
+    } catch (e) {
+      throw DataExportException('Failed to delete data: ${e.toString()}');
+    }
   }
 }

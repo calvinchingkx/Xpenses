@@ -16,6 +16,7 @@ void main() async {
 
   if (Platform.isAndroid) {
     await Permission.notification.request();
+    await _requestStoragePermissions();
   }
 
   // Initialize notification service
@@ -32,6 +33,24 @@ void main() async {
       child: const MyApp(),
     ),
   );
+}
+
+Future<void> _requestStoragePermissions() async {
+  // For Android 10 (API 29) and below
+  if (await Permission.storage.request().isGranted) {
+    return;
+  }
+
+  // For Android 11 (API 30) and above
+  if (await Permission.manageExternalStorage.request().isGranted) {
+    return;
+  }
+
+  // If permissions are permanently denied
+  if (await Permission.storage.isPermanentlyDenied ||
+      await Permission.manageExternalStorage.isPermanentlyDenied) {
+    await openAppSettings();
+  }
 }
 
 class MyApp extends StatelessWidget {
