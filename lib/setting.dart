@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'category_screen.dart';
 import 'theme_provider.dart';
 import 'services/data_service.dart';
+import 'user_profile.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -202,7 +203,12 @@ class SettingsScreen extends StatelessWidget {
                 context,
                 icon: Icons.person_outline_rounded,
                 title: 'Profile Settings',
-                onTap: () {},
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const ProfileScreen()),
+                  );
+                },
               ),
               const Divider(height: 1, indent: 16),
               _buildSettingTile(

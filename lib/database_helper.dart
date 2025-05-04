@@ -109,6 +109,46 @@ class DatabaseHelper {
         subcategory TEXT
       );
     ''');
+
+    await db.execute('''CREATE TABLE user (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      dob TEXT,
+      gender TEXT
+    )''');
+  }
+
+  // User Operations
+  Future<int> saveUserProfile(Map<String, dynamic> user) async {
+    final db = await database;
+    // First check if user exists
+    final count = Sqflite.firstIntValue(
+        await db.rawQuery('SELECT COUNT(*) FROM user')
+    ) ?? 0;
+
+    if (count == 0) {
+      return await db.insert('user', {
+        'name': user['name'],
+        'dob': user['dob'],
+        'gender': user['gender'],
+      });
+    } else {
+      return await db.update(
+        'user',
+        {
+          'name': user['name'],
+          'dob': user['dob'],
+          'gender': user['gender'],
+        },
+        where: 'id = 1',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>?> getUserProfile() async {
+    final db = await database;
+    final result = await db.query('user', limit: 1);
+    return result.isNotEmpty ? result.first : null;
   }
 
   //Account Operations
@@ -1033,6 +1073,4 @@ class DatabaseHelper {
     }
     return null;
   }
-
-
 }
