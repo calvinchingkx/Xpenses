@@ -158,10 +158,11 @@ class _BudgetScreenState extends State<BudgetScreen> {
       final currentDate = DateTime.now();
       final currentYearMonth = '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
       final selectedYearMonth = _selectedMonth ?? currentYearMonth;
+      final isCurrentMonth = selectedYearMonth == currentYearMonth;
 
       if (id == null) {
         // Creating a new budget
-        final newBudgetId = await DatabaseHelper().addBudget({
+        await DatabaseHelper().addBudget({
           'category': category,
           'type': 'expense',
           'budget_limit': amount,
@@ -173,7 +174,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
         });
 
         // If creating in current month, propagate to future months
-        if (selectedYearMonth == currentYearMonth) {
+        if (isCurrentMonth) {
           await _propagateNewBudgetToFutureMonths(category, amount);
         }
       } else {
@@ -183,6 +184,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
           throw Exception('Budget not found');
         }
 
+        // Update the specific budget first
         await DatabaseHelper().updateBudget({
           'id': id,
           'category': existingBudget['category'],
@@ -194,9 +196,13 @@ class _BudgetScreenState extends State<BudgetScreen> {
           'is_active': existingBudget['is_active']
         });
 
-        // If updating current month, update all future months
-        if (existingBudget['year_month'] == currentYearMonth) {
+        // If current month, update ALL future months
+        if (isCurrentMonth) {
           await _updateFutureMonthsBudgets(category, amount);
+        }
+        // If future month, update from selected month onwards
+        else {
+          await _updateFromSelectedMonthOnwards(selectedYearMonth, category, amount);
         }
       }
       await _loadData();
@@ -205,30 +211,80 @@ class _BudgetScreenState extends State<BudgetScreen> {
     }
   }
 
+  Future<void> _updateFromSelectedMonthOnwards(String selectedYearMonth, String category, double amount) async {
+    // Get all months from selected month onwards
+    final allMonths = await DatabaseHelper().getBudgetMonths();
+    final monthsToUpdate = allMonths.where((m) => m.compareTo(selectedYearMonth) >= 0).toList();
+
+    for (var month in monthsToUpdate) {
+      final existing = await DatabaseHelper().getBudgetByCategory(category, month);
+      if (existing != null) {
+        await DatabaseHelper().updateBudget({
+          'id': existing['id'],
+          'category': existing['category'],
+          'type': existing['type'],
+          'budget_limit': amount,
+          'current_month_spent': existing['current_month_spent'],
+          'previous_months_spent': existing['previous_months_spent'],
+          'year_month': existing['year_month'],
+          'is_active': existing['is_active']
+        });
+      } else {
+        // Create new budget if doesn't exist for this category/month
+        await DatabaseHelper().addBudget({
+          'category': category,
+          'type': 'expense',
+          'budget_limit': amount,
+          'current_month_spent': 0.0,
+          'previous_months_spent': 0.0,
+          'year_month': month,
+          'created_at': DateTime.now().toIso8601String(),
+          'is_active': 1
+        });
+      }
+    }
+  }
+
   Future<void> _deleteBudget(int id, String category) async {
     try {
       final currentDate = DateTime.now();
       final currentYearMonth = '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
-      final selectedYearMonth = _selectedMonth ?? currentYearMonth;
+      final budgetToDelete = await DatabaseHelper().getBudgetById(id);
+
+      if (budgetToDelete == null) {
+        throw Exception('Budget not found');
+      }
+
+      final selectedYearMonth = budgetToDelete['year_month'] as String;
+      final isCurrentMonth = selectedYearMonth == currentYearMonth;
 
       await DatabaseHelper().deleteBudget(id);
 
-      // If deleting from current month, delete from future months too
-      if (selectedYearMonth == currentYearMonth) {
-        final allMonths = await DatabaseHelper().getBudgetMonths();
-        final futureMonths = allMonths.where((m) => m.compareTo(currentYearMonth) > 0).toList();
-
-        for (var month in futureMonths) {
-          final existing = await DatabaseHelper().getBudgetByCategory(category, month);
-          if (existing != null) {
-            await DatabaseHelper().deleteBudget(existing['id'] as int);
-          }
-        }
+      // If current month, delete ALL future months
+      if (isCurrentMonth) {
+        await _deleteFutureMonthsBudgets(category);
+      }
+      // If future month, delete from selected month onwards
+      else {
+        await _deleteFromSelectedMonthOnwards(selectedYearMonth, category);
       }
 
       await _loadData();
     } catch (e) {
       _showError('Failed to delete budget: ${e.toString()}');
+    }
+  }
+
+  Future<void> _deleteFromSelectedMonthOnwards(String selectedYearMonth, String category) async {
+    // Get all months from selected month onwards
+    final allMonths = await DatabaseHelper().getBudgetMonths();
+    final monthsToDelete = allMonths.where((m) => m.compareTo(selectedYearMonth) >= 0).toList();
+
+    for (var month in monthsToDelete) {
+      final existing = await DatabaseHelper().getBudgetByCategory(category, month);
+      if (existing != null) {
+        await DatabaseHelper().deleteBudget(existing['id'] as int);
+      }
     }
   }
 
@@ -257,9 +313,12 @@ class _BudgetScreenState extends State<BudgetScreen> {
           appBar: AppBar(
             title: const Text('Budget Overview'),
             actions: [
-              _buildMonthSelector(),
               _buildSortMenu(),
             ],
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(80),
+              child: _buildMonthHeader(context),
+            ),
           ),
           body: Column(
             children: [
@@ -275,6 +334,57 @@ class _BudgetScreenState extends State<BudgetScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildMonthHeader(BuildContext context) {
+    final theme = Theme.of(context);
+    final currentDate = DateTime.now();
+    final currentYearMonth = '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
+    final selectedMonth = _selectedMonth ?? currentYearMonth;
+    final selectedDate = DateTime.parse('$selectedMonth-01');
+    final monthText = DateFormat('MMM yyyy').format(selectedDate);
+
+    return Column(
+      children: [
+        Divider(
+          thickness: 1,
+          color: theme.dividerColor.withOpacity(0.2),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                icon: Icon(Icons.arrow_left,
+                    color: theme.textTheme.bodyLarge?.color?.withOpacity(0.8)),
+                onPressed: () => _changeMonth(-1),
+              ),
+              GestureDetector(
+                onTap: _showMonthPicker,
+                child: Text(
+                  monthText,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: theme.textTheme.titleMedium?.color?.withOpacity(0.9),
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.arrow_right,
+                    color: theme.textTheme.bodyLarge?.color?.withOpacity(0.8)),
+                onPressed: () => _changeMonth(1),
+              ),
+            ],
+          ),
+        ),
+        Divider(
+          thickness: 1,
+          color: theme.dividerColor.withOpacity(0.2),
+        ),
+      ],
     );
   }
 
@@ -298,42 +408,6 @@ class _BudgetScreenState extends State<BudgetScreen> {
         _buildSortMenuItem('remaining', 'Sort by Remaining'),
       ],
       icon: const Icon(Icons.sort),
-    );
-  }
-
-  Widget _buildMonthSelector() {
-    final theme = Theme.of(context);
-    final currentDate = DateTime.now();
-    final currentYearMonth = '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
-    final selectedMonth = _selectedMonth ?? currentYearMonth;
-    final selectedDate = DateTime.parse('$selectedMonth-01');
-    final monthText = DateFormat('MMM yyyy').format(selectedDate);
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          icon: Icon(Icons.arrow_left,
-              color: theme.textTheme.bodyLarge?.color?.withOpacity(0.8)),
-          onPressed: () => _changeMonth(-1),
-        ),
-        GestureDetector(
-          onTap: _showMonthPicker,
-          child: Text(
-            monthText,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: theme.textTheme.titleMedium?.color?.withOpacity(0.9),
-            ),
-          ),
-        ),
-        IconButton(
-          icon: Icon(Icons.arrow_right,
-              color: theme.textTheme.bodyLarge?.color?.withOpacity(0.8)),
-          onPressed: () => _changeMonth(1),
-        ),
-      ],
     );
   }
 
@@ -590,6 +664,19 @@ class _BudgetScreenState extends State<BudgetScreen> {
     );
     final formKey = GlobalKey<FormState>();
 
+    // Filter out categories that already have budgets in the selected month
+    final currentDate = DateTime.now();
+    final selectedYearMonth = _selectedMonth ?? '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
+
+    final availableCategories = _categories.where((category) {
+      // If editing existing budget, include its category
+      if (budget != null && category['name'] == budget['category']) {
+        return true;
+      }
+      // Check if category already has a budget in this month
+      return !_budgets.any((b) => b['category'] == category['name'] && b['year_month'] == selectedYearMonth);
+    }).toList();
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -618,7 +705,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
                   labelText: 'Category',
                   border: OutlineInputBorder(),
                 ),
-                items: _categories
+                items: availableCategories
                     .map<DropdownMenuItem<String>>((c) => DropdownMenuItem<String>(
                   value: c['name'] as String,
                   child: Text(c['name'] as String),
@@ -734,7 +821,6 @@ class _BudgetScreenState extends State<BudgetScreen> {
 
   Future<void> _propagateNewBudgetToFutureMonths(String category, double amount) async {
     final currentDate = DateTime.now();
-    final currentYearMonth = '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
 
     // Generate future months (next 12 months)
     final futureMonths = <String>[];
@@ -763,7 +849,6 @@ class _BudgetScreenState extends State<BudgetScreen> {
 
   Future<void> _updateFutureMonthsBudgets(String category, double amount) async {
     final currentDate = DateTime.now();
-    final currentYearMonth = '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
 
     // Generate future months (next 12 months)
     final futureMonths = <String>[];
@@ -797,6 +882,22 @@ class _BudgetScreenState extends State<BudgetScreen> {
           'created_at': currentDate.toIso8601String(),
           'is_active': 1
         });
+      }
+    }
+  }
+
+  Future<void> _deleteFutureMonthsBudgets(String category) async {
+    final currentDate = DateTime.now();
+    final currentYearMonth = '${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}';
+
+    // Get all future months
+    final allMonths = await DatabaseHelper().getBudgetMonths();
+    final futureMonths = allMonths.where((m) => m.compareTo(currentYearMonth) > 0).toList();
+
+    for (var month in futureMonths) {
+      final existing = await DatabaseHelper().getBudgetByCategory(category, month);
+      if (existing != null) {
+        await DatabaseHelper().deleteBudget(existing['id'] as int);
       }
     }
   }
