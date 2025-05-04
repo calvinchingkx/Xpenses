@@ -114,7 +114,8 @@ class DatabaseHelper {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       dob TEXT,
-      gender TEXT
+      gender TEXT,
+      budget_notifications INTEGER DEFAULT 1  // Only keep budget notifications
     )''');
   }
 
@@ -917,23 +918,24 @@ class DatabaseHelper {
 
   Future<Map<String, dynamic>?> getBudgetById(int id) async {
     final db = await database;
-    final result = await db.query(
+    final results = await db.query(
       'budgets',
       where: 'id = ?',
       whereArgs: [id],
+      limit: 1,
     );
-    return result.isNotEmpty ? result.first : null;
+    return results.isNotEmpty ? results.first : null;
   }
 
   Future<Map<String, dynamic>?> getBudgetByCategory(String category, String yearMonth) async {
     final db = await database;
-    final result = await db.query(
+    final results = await db.query(
       'budgets',
       where: 'category = ? AND year_month = ?',
       whereArgs: [category, yearMonth],
       limit: 1,
     );
-    return result.isNotEmpty ? result.first : null;
+    return results.isNotEmpty ? results.first : null;
   }
 
   Future<Map<String, dynamic>?> getLatestBudget() async {
@@ -948,11 +950,10 @@ class DatabaseHelper {
 
   Future<List<String>> getBudgetMonths() async {
     final db = await database;
-    final result = await db.rawQuery('''
-    SELECT DISTINCT year_month FROM budgets 
-    ORDER BY year_month DESC
-  ''');
-    return result.map((e) => e['year_month'] as String).toList();
+    final results = await db.rawQuery(
+        'SELECT DISTINCT year_month FROM budgets ORDER BY year_month ASC'
+    );
+    return results.map((r) => r['year_month'] as String).toList();
   }
 
   Future<Map<String, dynamic>> getBudgetSummary(String yearMonth) async {
@@ -974,37 +975,15 @@ class DatabaseHelper {
   }
 
   Future<int> addBudget(Map<String, dynamic> budget) async {
-    try {
-      final db = await database;
-      return await db.insert('budgets', {
-        'category': budget['category'],
-        'type': budget['type'] ?? 'expense',
-        'budget_limit': budget['budget_limit'],
-        'current_month_spent': budget['current_month_spent'] ?? 0.0,
-        'previous_months_spent': budget['previous_months_spent'] ?? 0.0,
-        'year_month': budget['year_month'],
-        'created_at': budget['created_at'] ?? DateTime.now().toIso8601String(),
-        'is_active': budget['is_active'] ?? 1
-      });
-    } catch (e) {
-      debugPrint('Error adding budget: $e');
-      return -1;
-    }
+    final db = await database;
+    return await db.insert('budgets', budget);
   }
 
   Future<int> updateBudget(Map<String, dynamic> budget) async {
     final db = await database;
     return await db.update(
       'budgets',
-      {
-        'category': budget['category'],
-        'type': budget['type'],
-        'budget_limit': budget['budget_limit'],
-        'current_month_spent': budget['current_month_spent'],
-        'previous_months_spent': budget['previous_months_spent'],
-        'year_month': budget['year_month'],
-        'is_active': budget['is_active'],
-      },
+      budget,
       where: 'id = ?',
       whereArgs: [budget['id']],
     );

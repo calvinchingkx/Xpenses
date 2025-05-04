@@ -232,6 +232,7 @@ class DataService {
       await txn.delete('subcategories');
       await txn.delete('categories');
       await txn.delete('accounts');
+      await txn.delete('user');
     });
   }
 }

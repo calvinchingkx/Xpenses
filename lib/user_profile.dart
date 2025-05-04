@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:provider/provider.dart';
-import 'database_helper.dart';
+import '../services/data_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -15,7 +14,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late TextEditingController _nameController;
   late TextEditingController _dobController;
   String? _selectedGender;
-  final DatabaseHelper _dbHelper = DatabaseHelper();
+  bool _monthlyReports = true;
+  bool _budgetNotifications = true;
+  final DataService _dataService = DataService();
 
   @override
   void initState() {
@@ -33,30 +34,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _loadUserData() async {
-    final user = await _dbHelper.getUserProfile();
-    if (user != null) {
+    final db = await _dataService.dbHelper.database;
+    final user = await db.query('user', limit: 1);
+
+    if (user.isNotEmpty) {
       setState(() {
-        _nameController.text = user['name'] as String? ?? '';
-        if (user['dob'] != null) {
-          _dobController.text = user['dob'] as String;
-        }
-        _selectedGender = user['gender'] as String?;
+        _nameController.text = user[0]['name'] as String? ?? '';
+        _dobController.text = user[0]['dob'] as String? ?? '';
+        _selectedGender = user[0]['gender'] as String?;
+        // Initialize notification preferences
+        _monthlyReports = true; // Default value
+        _budgetNotifications = true; // Default value
       });
     }
   }
 
   Future<void> _saveProfile() async {
     if (_formKey.currentState!.validate()) {
-      await _dbHelper.saveUserProfile({
-        'name': _nameController.text,
-        'dob': _dobController.text,
-        'gender': _selectedGender,
-      });
+      final db = await _dataService.dbHelper.database;
+
+      // Check if user exists
+      final count = await db.rawQuery('SELECT COUNT(*) FROM user');
+      final exists = (count[0]['COUNT(*)'] as int) > 0;
+
+      if (exists) {
+        await db.update(
+          'user',
+          {
+            'name': _nameController.text,
+            'dob': _dobController.text,
+            'gender': _selectedGender,
+          },
+          where: 'id = 1',
+        );
+      } else {
+        await db.insert(
+          'user',
+          {
+            'name': _nameController.text,
+            'dob': _dobController.text,
+            'gender': _selectedGender,
+          },
+        );
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Profile saved successfully')),
       );
-      Navigator.pop(context);
     }
   }
 
@@ -98,7 +122,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Profile Picture Section (simplified)
+              // Profile Picture
               Center(
                 child: CircleAvatar(
                   radius: 50,
@@ -175,6 +199,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   }
                   return null;
                 },
+              ),
+              const SizedBox(height: 32),
+
+              // Notification Preferences Section
+              Text(
+                'Notification Preferences',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              SwitchListTile(
+                title: const Text('Budget Notifications'),
+                subtitle: const Text('Get alerts when approaching budget limits'),
+                value: _budgetNotifications,
+                onChanged: (value) {
+                  setState(() {
+                    _budgetNotifications = value;
+                  });
+                },
+                secondary: const Icon(Icons.notifications_active),
               ),
             ],
           ),

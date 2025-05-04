@@ -7,13 +7,20 @@ import 'report.dart';
 import 'setting.dart';
 import 'dashboard_screen.dart';
 import 'theme_provider.dart';
+import 'services/notification_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize services
+  await NotificationService().initialize();
+
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (context) => AppRefreshNotifier()),
         ChangeNotifierProvider(create: (context) => ThemeProvider()),
+        Provider(create: (context) => NotificationService()),
       ],
       child: const MyApp(),
     ),
