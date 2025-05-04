@@ -227,7 +227,7 @@ class DatabaseHelper {
         'balance': account['balance'],
       });
     } catch (e) {
-      print('Error adding account: $e');
+      debugPrint('Error adding account: $e');
       return -1;
     }
   }
@@ -246,7 +246,7 @@ class DatabaseHelper {
         whereArgs: [account['id']],
       );
     } catch (e) {
-      print('Error updating account: $e');
+      debugPrint('Error updating account: $e');
       return -1;
     }
   }
@@ -403,7 +403,7 @@ class DatabaseHelper {
         whereArgs: [accountId],
       );
     } catch (e) {
-      print('Error updating account balance: $e');
+      debugPrint('Error updating account balance: $e');
       return -1;
     }
   }

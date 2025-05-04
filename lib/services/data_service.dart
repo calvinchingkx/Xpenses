@@ -134,16 +134,6 @@ class DataService {
     }
   }
 
-  Future<String> get _localPath async {
-    final directory = await getApplicationSupportDirectory();
-    return directory.path;
-  }
-
-  Future<File> get _backupFile async {
-    final path = await _localPath;
-    return File('$path/finance_backup_${DateTime.now().millisecondsSinceEpoch}.json');
-  }
-
   Future<bool> requestStoragePermission() async {
     if (Platform.isAndroid) {
       if (await Permission.storage.isGranted ||

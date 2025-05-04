@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'category_screen.dart';
 import 'theme_provider.dart';
@@ -460,16 +459,6 @@ class SettingsScreen extends StatelessWidget {
                 icon: const Icon(Icons.share),
                 label: const Text('Share Backup'),
                 onPressed: () => dataService.shareBackupFile(context),
-              ),
-              TextButton.icon(
-                icon: const Icon(Icons.copy),
-                label: const Text('Copy Path'),
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: filePath));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Path copied to clipboard')),
-                  );
-                },
               ),
             ],
           ),

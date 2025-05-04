@@ -28,7 +28,6 @@ class _CategoryTransactionScreenState extends State<CategoryTransactionScreen> {
   final RefreshController _refreshController = RefreshController();
   bool _isLoading = false;
 
-  late final DateFormat _monthFormatter = DateFormat('MMM yyyy');
   late final DateFormat _displayDateFormatter = DateFormat('dd/MM/yyyy (EEE)');
   late final DateFormat _storageDateFormatter = DateFormat('dd/MM/yyyy');
   late final NumberFormat _currencyFormatter = NumberFormat.currency(symbol: '\$', decimalDigits: 2);

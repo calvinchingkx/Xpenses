@@ -215,7 +215,6 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   Future<void> _verifyAccountBalances() async {
-    debugPrint('Verifying all account balances...');
     for (final account in _accounts) {
       await _verifySingleAccountBalance(account['id'] as int);
     }
@@ -231,16 +230,8 @@ class _AccountScreenState extends State<AccountScreen> {
       // Calculate balance from transactions
       final calculatedBalance = await dbHelper.calculateAccountBalance(accountId);
 
-      debugPrint('''
-    Account $accountId verification:
-    Stored: $storedBalance
-    Calculated: $calculatedBalance
-    Difference: ${calculatedBalance - storedBalance}
-    ''');
-
       // Correct if discrepancy found
       if (calculatedBalance != storedBalance) {
-        debugPrint('Correcting balance for account $accountId');
         await dbHelper.forceUpdateAccountBalance(accountId, calculatedBalance);
       }
     } catch (e) {
@@ -265,11 +256,6 @@ class _AccountScreenState extends State<AccountScreen> {
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('Building AccountScreen with ${_accounts.length} accounts');
-    _accounts.forEach((account) {
-      debugPrint('Account ${account['id']}: ${account['name']} = ${account['balance']}');
-    });
-
     return Consumer<AppRefreshNotifier>(
       builder: (context, refreshNotifier, _) {
         if (refreshNotifier.shouldRefreshAccounts) {
