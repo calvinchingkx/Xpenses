@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import 'package:xpenses/services/notification_service.dart';
 import '../services/data_service.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -14,7 +16,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late TextEditingController _nameController;
   late TextEditingController _dobController;
   String? _selectedGender;
-  bool _monthlyReports = true;
   bool _budgetNotifications = true;
   final DataService _dataService = DataService();
 
@@ -42,9 +43,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _nameController.text = user[0]['name'] as String? ?? '';
         _dobController.text = user[0]['dob'] as String? ?? '';
         _selectedGender = user[0]['gender'] as String?;
-        // Initialize notification preferences
-        _monthlyReports = true; // Default value
-        _budgetNotifications = true; // Default value
+        // Only load budget notifications setting
+        _budgetNotifications = (user[0]['budget_notifications'] as int?) != 0;
+      });
+    } else {
+      // Set default if no user exists
+      setState(() {
+        _budgetNotifications = true; // Default enabled
       });
     }
   }
@@ -53,29 +58,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_formKey.currentState!.validate()) {
       final db = await _dataService.dbHelper.database;
 
+      final userData = {
+        'name': _nameController.text,
+        'dob': _dobController.text,
+        'gender': _selectedGender,
+        'budget_notifications': _budgetNotifications ? 1 : 0,
+      };
+
       // Check if user exists
       final count = await db.rawQuery('SELECT COUNT(*) FROM user');
       final exists = (count[0]['COUNT(*)'] as int) > 0;
 
       if (exists) {
-        await db.update(
-          'user',
-          {
-            'name': _nameController.text,
-            'dob': _dobController.text,
-            'gender': _selectedGender,
-          },
-          where: 'id = 1',
-        );
+        await db.update('user', userData, where: 'id = 1');
       } else {
-        await db.insert(
-          'user',
-          {
-            'name': _nameController.text,
-            'dob': _dobController.text,
-            'gender': _selectedGender,
-          },
-        );
+        await db.insert('user', userData);
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -184,8 +181,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: Text('Female'),
                   ),
                   DropdownMenuItem(
-                    value: 'Other',
-                    child: Text('Other'),
+                    value: 'Not to Say',
+                    child: Text('Not to Say'),
                   ),
                 ],
                 onChanged: (value) {
@@ -220,6 +217,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   });
                 },
                 secondary: const Icon(Icons.notifications_active),
+              ),
+              ListTile(
+                leading: const Icon(Icons.notification_add),
+                title: const Text('Test Notification'),
+                subtitle: const Text('Verify notifications are working'),
+                onTap: () async {
+                  final notificationService = Provider.of<NotificationService>(context, listen: false);
+                  await notificationService.showBudgetWarning('Test Category', 85);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Test notification sent')),
+                  );
+                },
               ),
             ],
           ),

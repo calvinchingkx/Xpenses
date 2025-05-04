@@ -12,15 +12,16 @@ import 'services/notification_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize services
-  await NotificationService().initialize();
+  // Initialize notification service
+  final notificationService = NotificationService();
+  await notificationService.initialize();
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (context) => AppRefreshNotifier()),
         ChangeNotifierProvider(create: (context) => ThemeProvider()),
-        Provider(create: (context) => NotificationService()),
+        Provider<NotificationService>(create: (context) => notificationService),
       ],
       child: const MyApp(),
     ),

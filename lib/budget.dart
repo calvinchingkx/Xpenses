@@ -57,6 +57,10 @@ class _BudgetScreenState extends State<BudgetScreen> {
         };
       }).toList();
 
+      for (var budget in updatedBudgets) {
+        await _checkBudgetNotifications(budget);
+      }
+
       setState(() {
         _budgets = _sortBudgets(updatedBudgets);
         _categories = categories;
@@ -73,41 +77,60 @@ class _BudgetScreenState extends State<BudgetScreen> {
   }
 
   Future<void> _checkBudgetNotifications(Map<String, dynamic> budget) async {
-    final limit = (budget['budget_limit'] as num).toDouble();
-    final spent = (budget['current_month_spent'] as num).toDouble();
-    final percentage = limit > 0 ? (spent / limit) : 0;
-    final category = budget['category'] as String;
+    try {
+      final db = await DatabaseHelper().database;
+      final user = await db.query('user', limit: 1);
 
-    final db = await DatabaseHelper().database;
-    final user = await db.query('user', limit: 1);
-    final notificationsEnabled = user.isNotEmpty
-        ? (user[0]['budget_notifications'] as int?) == 1
-        : true;
+      // Default to true (enabled) if no user record exists
+      final notificationsEnabled = user.isEmpty ||
+          (user[0]['budget_notifications'] as int?) != 0;
 
-    if (!notificationsEnabled) return;
+      if (!notificationsEnabled) {
+        debugPrint('Notifications disabled by user setting');
+        return;
+      }
 
-    final notificationService = Provider.of<NotificationService>(context, listen: false);
+      final limit = (budget['budget_limit'] as num).toDouble();
+      final spent = (budget['current_month_spent'] as num).toDouble();
+      final percentage = (limit > 0 ? (spent / limit) * 100 : 0).toDouble();
+      final category = budget['category'] as String;
 
-    if (spent > limit && budget['_notification_sent'] != 'alert') {
-      final overspendAmount = spent - limit;
-      notificationService.showBudgetAlert(category, overspendAmount);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Budget overspent for $category by \$${overspendAmount.toStringAsFixed(2)}'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 5),
-        ),
+      final notificationService = Provider.of<NotificationService>(
+        context,
+        listen: false,
       );
 
-      budget['_notification_sent'] = 'alert';
-    }
-    else if (percentage >= 0.8 && budget['_notification_sent'] != 'warning') {
-      notificationService.showBudgetWarning(category, percentage * 100);
-      budget['_notification_sent'] = 'warning';
-    }
-    else if (percentage < 0.8 && spent <= limit) {
-      budget['_notification_sent'] = null;
+      // Check for overspending (100% or more)
+      if (percentage >= 100) {
+        if (budget['_notification_sent'] != 'alert') {
+          final overspendAmount = spent - limit;
+          await notificationService.showBudgetAlert(category, overspendAmount);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Budget overspent for $category by \$${overspendAmount.toStringAsFixed(2)}'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+
+          // Update notification status
+          budget['_notification_sent'] = 'alert';
+        }
+      }
+      // Check for warning threshold (80-99%)
+      else if (percentage >= 80) {
+        if (budget['_notification_sent'] != 'warning') {
+          await notificationService.showBudgetWarning(category, percentage);
+          budget['_notification_sent'] = 'warning';
+        }
+      }
+      // Reset if below thresholds
+      else if (percentage < 80 && budget['_notification_sent'] != null) {
+        budget['_notification_sent'] = null;
+      }
+    } catch (e) {
+      debugPrint('Error checking budget notifications: $e');
     }
   }
 

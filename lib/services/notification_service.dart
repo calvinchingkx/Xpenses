@@ -1,7 +1,10 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationService {
+  static final NotificationService _instance = NotificationService._internal();
+  factory NotificationService() => _instance;
+  NotificationService._internal();
+
   final FlutterLocalNotificationsPlugin notificationsPlugin =
   FlutterLocalNotificationsPlugin();
 
@@ -9,12 +12,53 @@ class NotificationService {
     const AndroidInitializationSettings initializationSettingsAndroid =
     AndroidInitializationSettings('@mipmap/ic_launcher');
 
+    const DarwinInitializationSettings initializationSettingsIOS =
+    DarwinInitializationSettings();
+
     const InitializationSettings initializationSettings =
     InitializationSettings(
       android: initializationSettingsAndroid,
+      iOS: initializationSettingsIOS,
     );
 
-    await notificationsPlugin.initialize(initializationSettings);
+    await notificationsPlugin.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: (details) {
+        // Handle notification tap if needed
+      },
+    );
+
+    await _createNotificationChannels();
+  }
+
+  Future<void> _createNotificationChannels() async {
+    // For Android 8.0+
+    final androidPlugin = notificationsPlugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+
+    if (androidPlugin != null) {
+      // Budget alert channel
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          'budget_alerts',
+          'Budget Alerts',
+          description: 'Notifications for budget overages',
+          importance: Importance.max,
+          playSound: true,
+          sound: RawResourceAndroidNotificationSound('notification'),
+        ),
+      );
+
+      // Budget warning channel
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          'budget_warnings',
+          'Budget Warnings',
+          description: 'Notifications for budget warnings',
+          importance: Importance.defaultImportance,
+        ),
+      );
+    }
   }
 
   Future<void> showBudgetAlert(String category, double overspendAmount) async {
@@ -22,16 +66,16 @@ class NotificationService {
     AndroidNotificationDetails(
       'budget_alerts',
       'Budget Alerts',
+      channelDescription: 'Notifications for budget overages',
       importance: Importance.max,
-      priority: Priority.high,
-      color: Colors.red,
+      playSound: true,
     );
 
     const NotificationDetails platformChannelSpecifics =
     NotificationDetails(android: androidPlatformChannelSpecifics);
 
     await notificationsPlugin.show(
-      0,
+      DateTime.now().millisecondsSinceEpoch % 100000,
       'Budget Alert',
       'You\'ve exceeded your $category budget by \$${overspendAmount.toStringAsFixed(2)}',
       platformChannelSpecifics,
@@ -43,16 +87,15 @@ class NotificationService {
     AndroidNotificationDetails(
       'budget_warnings',
       'Budget Warnings',
+      channelDescription: 'Notifications for budget warnings',
       importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
-      color: Colors.orange,
     );
 
     const NotificationDetails platformChannelSpecifics =
     NotificationDetails(android: androidPlatformChannelSpecifics);
 
     await notificationsPlugin.show(
-      1,
+      DateTime.now().millisecondsSinceEpoch % 100000,
       'Budget Warning',
       'You\'ve used ${percentageUsed.toStringAsFixed(0)}% of your $category budget',
       platformChannelSpecifics,
