@@ -582,11 +582,11 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
   }) {
     final showSubcategories = expandedCategory != null;
     final hasSubcategories = showSubcategories &&
-        ((_subcategoryDetails[expandedCategory]?.isNotEmpty ?? false));
+        (_subcategoryDetails[expandedCategory]?.isNotEmpty ?? false);
 
-    final displayData = showSubcategories
-        ? (hasSubcategories
-        ? _aggregateSubcategories(_subcategoryDetails[expandedCategory] ?? [])
+            final displayData = showSubcategories
+            ? (hasSubcategories
+            ? _aggregateSubcategories(_subcategoryDetails[expandedCategory] ?? [])
         : {expandedCategory: data[expandedCategory] ?? 0.0})
         : data;
 
@@ -781,20 +781,21 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
             ),
           if (hasSubcategories)
             Column(
-              children: _subcategoryDetails[category]!
-                  .map((subcat) => Padding(
+              children: _aggregateSubcategories(_subcategoryDetails[category]!)
+                  .entries
+                  .map((entry) => Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8.0),
                 child: Row(
                   children: [
                     Expanded(
                       child: Text(
-                        subcat['name'] ?? 'Uncategorized',
-                        style: const TextStyle(fontSize: 16),
+                        entry.key,
+                        style: TextStyle(fontSize: 16),
                       ),
                     ),
                     Text(
-                      '\$${(subcat['amount'] as num).toStringAsFixed(2)}',
-                      style: const TextStyle(
+                      '\$${entry.value.toStringAsFixed(2)}',
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),
@@ -1222,7 +1223,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
     for (final subcat in subcategories) {
       final name = subcat['name'] as String;
       final amount = (subcat['amount'] as num).toDouble();
-      result[name] = (result[name] ?? 0) + amount;
+      result[name] = (result[name] ?? 0) + amount; // Sum amounts for same subcategory
     }
     return result;
   }
@@ -1263,10 +1264,10 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
             'name': subcategory,
             'amount': amount,
           });
-        } else if (t['type'] == 'Income' && t['category'] != null) {
+        } else if (t['type'] == 'Expense' && t['category'] != null) {
           final category = t['category'] as String;
           final amount = (t['amount'] as num).toDouble();
-          _incomeByCategory[category] = (_incomeByCategory[category] ?? 0) + amount;
+          _expensesByCategory[category] = (_expensesByCategory[category] ?? 0) + amount;
 
           // Group by subcategory
           final subcategory = t['subcategory'] as String? ?? 'Uncategorized';

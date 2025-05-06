@@ -115,7 +115,7 @@ class DatabaseHelper {
       name TEXT NOT NULL,
       dob TEXT,
       gender TEXT,
-      budget_notifications INTEGER DEFAULT 1  // Only keep budget notifications
+      budget_notifications INTEGER DEFAULT 1 
     )''');
   }
 
