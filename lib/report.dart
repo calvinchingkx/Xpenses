@@ -1264,10 +1264,10 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
             'name': subcategory,
             'amount': amount,
           });
-        } else if (t['type'] == 'Expense' && t['category'] != null) {
+        } else if (t['type'] == 'Income' && t['category'] != null) {
           final category = t['category'] as String;
           final amount = (t['amount'] as num).toDouble();
-          _expensesByCategory[category] = (_expensesByCategory[category] ?? 0) + amount;
+          _incomeByCategory[category] = (_incomeByCategory[category] ?? 0) + amount;
 
           // Group by subcategory
           final subcategory = t['subcategory'] as String? ?? 'Uncategorized';
